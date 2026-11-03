@@ -1,0 +1,18 @@
+# Builds the air/OS packages (x86_64 and arm64) on every push to main and publishes them to the
+# rolling "latest" release; the image builds take them from the package pool. The pipeline lives
+# in airos-works/airos-ci (apps/build-app-packages.sh, build_aircal).
+name: air/OS build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  airos:
+    uses: airos-works/airos-ci/.github/workflows/app.yml@main
+    with:
+      app: aircal
+      repo-dir: aircal
+    permissions:
+      contents: write
