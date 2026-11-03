@@ -40,7 +40,7 @@ view, and keep it in sync with the services you already use.
 <!-- airos-ci:latest-builds:start -->
 ## Latest builds
 
-Built automatically by air/OS CI from commit `415e380` on 2026-11-03 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
+Built automatically by air/OS CI from commit `3092d61` on 2026-11-03 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
 
 | Architecture | Package |
 |---|---|
