@@ -90,7 +90,9 @@ public:
 	void DeleteEvent(const aircal::DisplayEvent& event);
 	void ShowEventMenu(const aircal::DisplayEvent& event, BPoint screenPoint);
 	void ShowTaskMenu(const std::string& taskId, BPoint screenPoint);
-	void QuickEntry(const std::string& text);
+	// Returns the id of the event or task it made.
+	std::string QuickEntry(const std::string& text);
+	void ScriptTask(BMessage* message, BMessage& reply);
 
 	const std::string& SearchText() const { return fSearch; }
 

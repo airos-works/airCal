@@ -43,6 +43,9 @@ enum {
 	kMsgSyncNow = 'sync',
 	kMsgAccountAdded = 'aadd',		// "account"
 	kMsgImport = 'impt',
+	kMsgScriptTask = 'stsk',		// scripting: "task" id or "title"; "newTitle",
+									// "due" (YYYY-MM-DD, "" clears), "completed",
+									// "delete"; replies "task" id, "remote" id
 	kMsgExport = 'expt',
 	kMsgPrefsChanged = 'pchg',
 

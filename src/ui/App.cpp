@@ -377,9 +377,32 @@ App::MessageReceived(BMessage* message)
 		case kMsgGoToDate:
 		case kMsgNewEvent:
 		case kMsgNewTask:
+		case kMsgScriptTask:
+		{
+			// hey waits for the answer: run it in the window and reply here.
+			BMessage reply(B_REPLY);
+			if (fWindow != nullptr && fWindow->Lock()) {
+				fWindow->ScriptTask(message, reply);
+				fWindow->Unlock();
+			}
+			message->SendReply(&reply);
+			break;
+		}
 		case kMsgQuickEntry:
+			if (fWindow != nullptr && message->IsSourceWaiting()) {
+				BMessage reply(B_REPLY);
+				const char* text = message->GetString("text", "");
+				if (fWindow->Lock()) {
+					reply.AddString("id", fWindow->QuickEntry(text).c_str());
+					fWindow->Unlock();
+				}
+				message->SendReply(&reply);
+				break;
+			}
+			// fall through
 		case kMsgTaskFilter:
 		case kMsgToggleSidebar:
+		case kMsgToggleTask:
 		case 'adgo':
 		case 'adcd':
 		case 'adtd':

@@ -119,7 +119,10 @@ Cross-compiling on Linux with an air/OS SDK (the build server's layout):
 
 Scripting: `hey airCal 'svew' with view=month`, `hey airCal 'gdat' with
 date=2026-11-03`, `hey airCal 'qent' with text="Lunch tomorrow at noon"`,
-`hey airCal 'sync'`.
+`hey airCal 'sync'`, and for tasks `hey airCal stsk with title="…"` plus
+`and newTitle="…"`, `and due=2026-11-06`, `and completed=true` or
+`and delete=true` (the reply gives the task's ids); `qent` replies with the id
+of what it made.
 
 ## Layout
 

@@ -30,6 +30,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 using namespace aircal;
 
@@ -648,7 +649,7 @@ MainWindow::ShowTaskMenu(const std::string& taskId, BPoint screenPoint)
 }
 
 
-void
+std::string
 MainWindow::QuickEntry(const std::string& text)
 {
 	Store& store = TheApp()->Store();
@@ -660,6 +661,7 @@ MainWindow::QuickEntry(const std::string& text)
 	}
 	QuickEntryResult result = ParseQuickEntry(text, Now(), duration, weekStart);
 	std::string calendarId;
+	std::string madeId;
 	{
 		std::lock_guard<std::recursive_mutex> lock(store.Mutex());
 		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), result.isTask ? "New Task" : "New Event");
@@ -688,7 +690,7 @@ MainWindow::QuickEntry(const std::string& text)
 				? "There is no task list to add this to."
 				: "There is no calendar to add this to.", "OK");
 			alert->Go(nullptr);
-			return;
+			return "";
 		}
 		calendarId = target->id;
 		Account* account = store.AccountOf(*target);
@@ -723,12 +725,10 @@ MainWindow::QuickEntry(const std::string& text)
 			}
 			if (result.alarmMinutes >= 0)
 				task.alarms.push_back(result.alarmMinutes);
+			task.id = NewId();
+			madeId = task.id;
 			store.UpdateTask(task);
-			for (auto& item : store.Tasks()) {
-				if (item->title == task.title && item->calendarId == calendarId
-					&& item->pending == Pending::Create)
-					SelectTask(item->id);
-			}
+			SelectTask(task.id);
 		} else {
 			Event event;
 			event.calendarId = calendarId;
@@ -754,6 +754,7 @@ MainWindow::QuickEntry(const std::string& text)
 			}
 			OccurrenceRef none;
 			std::string id = SaveEvent(store, none, event, EditScope::All);
+			madeId = id;
 			Selection selection;
 			selection.kind = Selection::EventItem;
 			selection.ref.eventId = id;
@@ -768,6 +769,94 @@ MainWindow::QuickEntry(const std::string& text)
 		Date date = result.allDay ? result.startDate : LocalDate(result.start);
 		GoTo(date);
 	}
+	return madeId;
+}
+
+// A yes/no field as hey sends it: a bool, an int or "true"/"false".
+static bool
+FindFlag(BMessage* message, const char* name, bool& value)
+{
+	bool flag;
+	int32 number;
+	const char* text;
+	if (message->FindBool(name, &flag) == B_OK)
+		value = flag;
+	else if (message->FindInt32(name, &number) == B_OK)
+		value = number != 0;
+	else if (message->FindString(name, &text) == B_OK)
+		value = strcmp(text, "true") == 0 || strcmp(text, "1") == 0
+			|| strcmp(text, "yes") == 0;
+	else
+		return false;
+	return true;
+}
+
+
+// hey airCal stsk with title="..." [and newTitle="..."] [and due="2026-11-05"]
+//     [and completed=true] [and delete=true]
+void
+MainWindow::ScriptTask(BMessage* message, BMessage& reply)
+{
+	Store& store = TheApp()->Store();
+	std::string id = message->GetString("task", "");
+	std::string title = message->GetString("title", "");
+	std::string result = "not found";
+	std::string calendar;
+	std::string remote;
+	{
+		std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+		Task* task = id.empty() ? nullptr : store.FindTask(id);
+		if (task == nullptr && !title.empty()) {
+			for (auto& item : store.Tasks()) {
+				if (item->title == title && item->pending != Pending::Delete) {
+					task = item.get();
+					break;
+				}
+			}
+		}
+		if (task != nullptr) {
+			id = task->id;
+			calendar = task->calendarId;
+			UndoScope undo(TheApp()->Undo(), store, "Edit Task");
+			bool remove = false;
+			FindFlag(message, "delete", remove);
+			if (remove) {
+				store.DeleteTask(id);
+				result = "deleted";
+			} else {
+				Task edited = *task;
+				bool changed = false;
+				const char* text;
+				if (message->FindString("newTitle", &text) == B_OK) {
+					edited.title = text;
+					changed = true;
+				}
+				if (message->FindString("due", &text) == B_OK) {
+					Date date;
+					edited.hasDue = Date::FromIso(text, date);
+					edited.dueDate = date;
+					edited.dueHasTime = false;
+					changed = true;
+				}
+				if (changed)
+					store.UpdateTask(edited);
+				bool completed;
+				if (FindFlag(message, "completed", completed))
+					store.SetTaskCompleted(id, completed);
+				result = "ok";
+			}
+			Task* now = store.FindTask(id);
+			if (now != nullptr)
+				remote = now->remoteId;
+		}
+	}
+	if (!calendar.empty()) {
+		TheApp()->RequestPush(calendar);
+		TheApp()->ScheduleSave();
+	}
+	reply.AddString("result", result.c_str());
+	reply.AddString("task", id.c_str());
+	reply.AddString("remote", remote.c_str());
 }
 
 
@@ -935,8 +1024,22 @@ MainWindow::MessageReceived(BMessage* message)
 		case kMsgQuickEntry:
 		{
 			const char* text;
+			std::string id;
 			if (message->FindString("text", &text) == B_OK && text[0] != '\0')
-				QuickEntry(text);
+				id = QuickEntry(text);
+			if (message->IsSourceWaiting()) {
+				BMessage reply(B_REPLY);
+				reply.AddString("id", id.c_str());
+				message->SendReply(&reply);
+			}
+			break;
+		}
+		case kMsgScriptTask:
+		{
+			BMessage reply(B_REPLY);
+			ScriptTask(message, reply);
+			if (message->IsSourceWaiting())
+				message->SendReply(&reply);
 			break;
 		}
 		case kMsgToggleTask:
