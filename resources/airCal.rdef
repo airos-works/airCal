@@ -1,0 +1,11 @@
+resource vector_icon { import "airCal.hvif" };
+resource app_signature "application/x-vnd.airos-airCal";
+resource app_flags B_SINGLE_LAUNCH;
+resource app_version {
+	major = 1, middle = 0, minor = 0, variety = B_APPV_FINAL, internal = 1,
+	short_info = "airCal",
+	long_info = "Calendars and to-dos for air/OS: Google Calendar, Google Tasks, CalDAV and Todoist, with natural-language entry."
+};
+resource file_types message {
+	"types" = "text/calendar"
+};
