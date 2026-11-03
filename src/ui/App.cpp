@@ -9,6 +9,8 @@
 #include "net/CurlHttp.h"
 #include "platform/KeyStoreSecrets.h"
 
+#include <nlohmann/json.hpp>
+
 #include <AboutWindow.h>
 #include <Alert.h>
 #include <Entry.h>
@@ -38,6 +40,63 @@ enum {
 	kMsgSyncStatusInternal = 'sysi',
 	kMsgScheduleSave = 'scsv'
 };
+
+
+namespace {
+
+// Test runs (AIRCAL_FILE_SECRETS=1): credentials in a 0600 JSON file in the
+// data folder instead of the keyring, so they never touch the user's keys.
+class FileSecrets : public Secrets {
+public:
+	explicit FileSecrets(const std::string& path) : fPath(path) {}
+
+	bool Get(const std::string& key, std::string& value) override
+	{
+		nlohmann::json all = Load();
+		if (!all.contains(key) || !all[key].is_string())
+			return false;
+		value = all[key].get<std::string>();
+		return true;
+	}
+	bool Set(const std::string& key, const std::string& value) override
+	{
+		nlohmann::json all = Load();
+		all[key] = value;
+		return Write(all);
+	}
+	void Remove(const std::string& key) override
+	{
+		nlohmann::json all = Load();
+		all.erase(key);
+		Write(all);
+	}
+
+private:
+	nlohmann::json Load()
+	{
+		BFile file(fPath.c_str(), B_READ_ONLY);
+		off_t size = 0;
+		if (file.InitCheck() != B_OK || file.GetSize(&size) != B_OK || size <= 0)
+			return nlohmann::json::object();
+		std::string text(size, '\0');
+		file.Read(&text[0], size);
+		nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+		return j.is_object() ? j : nlohmann::json::object();
+	}
+	bool Write(const nlohmann::json& all)
+	{
+		BFile file(fPath.c_str(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+		if (file.InitCheck() != B_OK)
+			return false;
+		file.SetPermissions(0600);
+		std::string text = all.dump();
+		return file.Write(text.data(), text.size()) == (ssize_t)text.size();
+	}
+
+	std::string fPath;
+};
+
+}	// namespace
 
 
 App*
@@ -96,7 +155,10 @@ App::App()
 		}
 		Format::SetUse24Hour(fStore->Prefs().use24Hour);
 	}
-	fSecrets.reset(new KeyStoreSecrets(fDataDirectory + "/credentials.json"));
+	if (getenv("AIRCAL_FILE_SECRETS") != nullptr)
+		fSecrets.reset(new FileSecrets(fDataDirectory + "/test-credentials.json"));
+	else
+		fSecrets.reset(new KeyStoreSecrets(fDataDirectory + "/credentials.json"));
 	fHttp.reset(new CurlHttp());
 	fSync.reset(new SyncEngine(*fStore, *fHttp, *fSecrets));
 	fAlarmsCheckedUntil = Now();
