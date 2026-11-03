@@ -32,6 +32,19 @@ view, and keep it in sync with the services you already use.
   follows air/OS's light/dark switch live.
 - Import `.ics` files (drop them on airCal or File › Import) and export events.
 
+<!-- airos-ci:latest-builds:start -->
+## Latest builds
+
+Built automatically by air/OS CI from commit `2b3edf2` on 2026-11-03 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
+
+| Architecture | Package |
+|---|---|
+| arm64 | [aircal-1.0.0-1-arm64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-1-arm64.hpkg) |
+| x86_64 | [aircal-1.0.0-1-x86_64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-1-x86_64.hpkg) |
+
+Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2445-gcc2f5a0848, arm64 hrev60207-2445-gcc2f5a0848.
+<!-- airos-ci:latest-builds:end -->
+
 ## Accounts
 
 **Calendar › Accounts…** (or **Add Account…** in the sidebar's Calendars tab).
