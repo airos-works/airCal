@@ -13,6 +13,11 @@ view, and keep it in sync with the services you already use.
   to create an event, drag events to move them (across days too), drag the
   bottom edge to change the length. Recurring events ask whether a change is
   for this event, future events or all events.
+- **Event details**: time zones (shown and typed in the event's own zone, with
+  a zone picker), invitees (sent as Google invitations or CalDAV ATTENDEEs for
+  servers that schedule), alerts, repeats, URL and video-call links, notes.
+- **Undo and redo** (Edit menu) for every change made in airCal; an undone
+  change syncs like any other edit.
 - **Tasks**: Today (with overdue), Upcoming, All (by list), Completed and per
   list, with priorities, labels, subtasks, due dates and times, recurring
   tasks, and tasks shown in the calendar on their due date.
@@ -102,6 +107,12 @@ Cross-compiling on Linux with an air/OS SDK (the build server's layout):
   `AIRCAL_CLOUD_BASE=http://host:18480` to use it.
 - `tools/caldav-server.sh --daemon --seed` runs Radicale with seeded calendars
   (user `tester`, password `secret`).
+- `make integration-host` runs the real providers end to end against both.
+  `AIRCAL_CALDAV_URL=… AIRCAL_CALDAV_USER=… AIRCAL_CALDAV_PASSWORD=…
+  build-host/aircal_integration generic` checks any other CalDAV server; it
+  passes on Radicale 3.9, Xandikos and Nextcloud (sabre/dav).
+- `AIRCAL_FILE_SECRETS=1` keeps credentials in the data folder instead of the
+  keyring (for test runs).
 - `tools/vm/run-vm.sh` starts a Haiku test VM (VNC 5914, SSH 2235) where the
   host is `10.0.2.2`.
 - `AIRCAL_SETTINGS_DIR` points airCal at another data folder.
