@@ -38,6 +38,7 @@ enum {
 	kMsgContextComplete = 'cxcp',
 	kMsgContextCalendar = 'cxcl',
 	kMsgContextDue = 'cxdu',
+	kMsgContextSubtask = 'cxst',
 	kMsgExportRef = 'exrf',
 	kMsgFocusSearch = 'fsrh',
 	kMsgFocusEntry = 'fent'
@@ -600,6 +601,7 @@ MainWindow::ShowTaskMenu(const std::string& taskId, BPoint screenPoint)
 	menu->AddItem(new BMenuItem("Edit…", new BMessage(kMsgContextEdit)));
 	menu->AddItem(new BMenuItem(completed ? "Mark as Not Completed"
 		: "Mark as Completed", new BMessage(kMsgContextComplete)));
+	menu->AddItem(new BMenuItem("Add Subtask…", new BMessage(kMsgContextSubtask)));
 	BMenu* due = new BMenu("Due");
 	const char* labels[] = {"Today", "Tomorrow", "Next Week", "No Date"};
 	for (int i = 0; i < 4; i++) {
@@ -956,6 +958,20 @@ MainWindow::MessageReceived(BMessage* message)
 						completed = task->completed;
 				}
 				ToggleTask(fSelection.taskId, !completed);
+			}
+			break;
+		case kMsgContextSubtask:
+			if (fSelection.kind == Selection::TaskItem) {
+				Task draft;
+				{
+					std::lock_guard<std::recursive_mutex> lock(TheApp()->Store().Mutex());
+					Task* parent = TheApp()->Store().FindTask(fSelection.taskId);
+					if (parent == nullptr)
+						break;
+					draft.calendarId = parent->calendarId;
+					draft.parentId = parent->id;
+				}
+				OpenTaskEditor("", draft);
 			}
 			break;
 		case kMsgContextDue:

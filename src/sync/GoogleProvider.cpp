@@ -208,7 +208,7 @@ GoogleProvider::SyncCalendarList()
 		}
 	}
 	for (Calendar* calendar : store.CalendarsOf(fAccountId)) {
-		if (!calendar->tasks && seen.count(calendar->remoteId) == 0)
+		if (!calendar->pendingCreate && !calendar->tasks && seen.count(calendar->remoteId) == 0)
 			store.RemoveCalendar(calendar->id);
 	}
 	store.Changed();
@@ -218,6 +218,26 @@ GoogleProvider::SyncCalendarList()
 void
 GoogleProvider::SyncTaskLists()
 {
+	// Lists made in airCal first.
+	std::vector<std::pair<std::string, std::string>> fresh;	// id, name
+	{
+		std::lock_guard<std::recursive_mutex> lock(fContext->store.Mutex());
+		for (Calendar* list : fContext->store.CalendarsOf(fAccountId)) {
+			if (list->pendingCreate && list->tasks)
+				fresh.push_back({list->id, list->name});
+		}
+	}
+	for (auto& item : fresh) {
+		json body{{"title", item.second}};
+		json created = Api("POST", fEndpoints.googleTasks + "/users/@me/lists", &body);
+		std::lock_guard<std::recursive_mutex> lock(fContext->store.Mutex());
+		Calendar* list = fContext->store.FindCalendar(item.first);
+		if (list != nullptr && created.is_object() && !JStr(created, "id").empty()) {
+			list->remoteId = kTasksPrefix + JStr(created, "id");
+			list->pendingCreate = false;
+		}
+	}
+
 	std::vector<json> items;
 	std::string pageToken;
 	do {
@@ -259,7 +279,7 @@ GoogleProvider::SyncTaskLists()
 		list->order = order++;
 	}
 	for (Calendar* calendar : store.CalendarsOf(fAccountId)) {
-		if (calendar->tasks && seen.count(calendar->remoteId) == 0)
+		if (!calendar->pendingCreate && calendar->tasks && seen.count(calendar->remoteId) == 0)
 			store.RemoveCalendar(calendar->id);
 	}
 	store.Changed();

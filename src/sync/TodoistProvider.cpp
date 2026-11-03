@@ -202,6 +202,26 @@ TodoistProvider::Sync(const std::string& accountId, SyncContext& context)
 void
 TodoistProvider::SyncProjects()
 {
+	// Projects made in airCal first.
+	std::vector<std::pair<std::string, std::string>> fresh;	// id, name
+	{
+		std::lock_guard<std::recursive_mutex> lock(fContext->store.Mutex());
+		for (Calendar* list : fContext->store.CalendarsOf(fAccountId)) {
+			if (list->pendingCreate)
+				fresh.push_back({list->id, list->name});
+		}
+	}
+	for (auto& item : fresh) {
+		json body{{"name", item.second}};
+		json created = Api("POST", "/projects", &body);
+		std::lock_guard<std::recursive_mutex> lock(fContext->store.Mutex());
+		Calendar* list = fContext->store.FindCalendar(item.first);
+		if (list != nullptr && created.is_object() && !JId(created, "id").empty()) {
+			list->remoteId = JId(created, "id");
+			list->pendingCreate = false;
+		}
+	}
+
 	std::vector<json> projects = Paged("/projects", "results");
 	std::vector<json> sections = Paged("/sections", "results");
 	fSections.clear();
@@ -253,7 +273,7 @@ TodoistProvider::SyncProjects()
 		}
 	}
 	for (Calendar* calendar : store.CalendarsOf(fAccountId)) {
-		if (seen.count(calendar->remoteId) == 0)
+		if (!calendar->pendingCreate && seen.count(calendar->remoteId) == 0)
 			store.RemoveCalendar(calendar->id);
 	}
 	store.Changed();

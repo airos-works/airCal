@@ -288,6 +288,39 @@ TestTodoist(PlainHttp& http, MemorySecrets& secrets, const std::string& dir)
 	EXPECT(!stillThere, "deleted on the server");
 	EXPECT(PendingCount(store) == 0, "nothing left pending");
 
+	// A project made in airCal, with a subtask under a task in it.
+	Calendar project;
+	project.accountId = id;
+	project.name = "airCal project";
+	project.tasks = true;
+	project.events = false;
+	project.pendingCreate = true;
+	std::string projectId = store.AddCalendar(project).id;
+	Task parentTask;
+	parentTask.calendarId = projectId;
+	parentTask.title = "Plan the launch";
+	store.UpdateTask(parentTask);
+	std::string parentId;
+	for (auto& item : store.Tasks()) {
+		if (item->title == parentTask.title)
+			parentId = item->id;
+	}
+	Task child;
+	child.calendarId = projectId;
+	child.parentId = parentId;
+	child.title = "Write the announcement";
+	store.UpdateTask(child);
+	Sync(store, http, secrets, id);
+	Calendar* made = store.FindCalendar(projectId);
+	EXPECT(made != nullptr && !made->pendingCreate && !made->remoteId.empty(),
+		"new project created on Todoist");
+	bool childLinked = false;
+	for (auto& item : store.Tasks()) {
+		if (item->title == child.title)
+			childLinked = item->parentId == parentId && item->pending == Pending::None;
+	}
+	EXPECT(childLinked, "subtask created under its parent");
+
 	// Refresh: expire tokens, sync again.
 	HttpRequest expire;
 	expire.method = "POST";
@@ -475,6 +508,29 @@ TestGoogle(PlainHttp& http, MemorySecrets& secrets, const std::string& dir)
 			doneThere = item->completed && item->dueDate == task.dueDate;
 	}
 	EXPECT(doneThere, "completed task with its due date on Google");
+
+	Calendar list;
+	list.accountId = id;
+	list.name = "Packing";
+	list.tasks = true;
+	list.events = false;
+	list.pendingCreate = true;
+	std::string listId = store.AddCalendar(list).id;
+	Task item;
+	item.calendarId = listId;
+	item.title = "Passport";
+	store.UpdateTask(item);
+	Sync(store, http, secrets, id);
+	Calendar* packing = store.FindCalendar(listId);
+	EXPECT(packing != nullptr && !packing->pendingCreate
+		&& packing->remoteId.compare(0, 6, "tasks/") == 0, "new Google task list");
+	Sync(check, http, secrets, id);
+	bool listThere = false;
+	for (auto& calendar : check.Calendars()) {
+		if (calendar->name == "Packing")
+			listThere = !check.TasksIn(calendar->id).empty();
+	}
+	EXPECT(listThere, "list and its task seen by another client");
 	store.Save();
 }
 

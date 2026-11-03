@@ -8,7 +8,9 @@
 #include "Theme.h"
 #include "core/QuickEntry.h"
 
+#include <Button.h>
 #include <LayoutBuilder.h>
+#include <Screen.h>
 #include <PopUpMenu.h>
 #include <MenuItem.h>
 #include <ScrollBar.h>
@@ -31,7 +33,60 @@ enum {
 	kMsgEntryModified = 'enmd',
 	kMsgEntryInvoked = 'enin',
 	kMsgTab = 'stab',
-	kMsgCalendarMenu = 'clmn'
+	kMsgCalendarMenu = 'clmn',
+	kMsgAccountMenu = 'acmn',
+	kMsgCreateCollection = 'crcl',
+	kMsgPromptOK = 'prok'
+};
+
+
+// Asks for the name of a new calendar or task list.
+class NamePrompt : public BWindow {
+public:
+	NamePrompt(BMessenger target, BMessage* reply, const char* title,
+		const char* label)
+		:
+		BWindow(BRect(0, 0, 320, 100), title, B_FLOATING_WINDOW_LOOK,
+			B_MODAL_APP_WINDOW_FEEL, B_NOT_ZOOMABLE | B_NOT_RESIZABLE
+				| B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE),
+		fTarget(target),
+		fReply(reply)
+	{
+		fName = new BTextControl("name", label, "", nullptr);
+		BButton* create = new BButton("create", "Create", new BMessage(kMsgPromptOK));
+		BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
+			.SetInsets(B_USE_WINDOW_SPACING)
+			.Add(fName)
+			.AddGroup(B_HORIZONTAL)
+				.AddGlue()
+				.Add(new BButton("cancel", "Cancel", new BMessage(B_QUIT_REQUESTED)))
+				.Add(create)
+			.End();
+		SetDefaultButton(create);
+		fName->MakeFocus(true);
+		CenterOnScreen();
+	}
+
+	~NamePrompt() override { delete fReply; }
+
+	void MessageReceived(BMessage* message) override
+	{
+		if (message->what == kMsgPromptOK) {
+			std::string name = fName->Text();
+			if (name.empty())
+				return;
+			fReply->AddString("name", name.c_str());
+			fTarget.SendMessage(fReply);
+			Quit();
+			return;
+		}
+		BWindow::MessageReceived(message);
+	}
+
+private:
+	BMessenger fTarget;
+	BMessage* fReply;
+	BTextControl* fName;
 };
 
 
@@ -822,7 +877,10 @@ public:
 			if (where.y < row.frame.top || where.y > row.frame.bottom || row.section)
 				continue;
 			if (row.account) {
-				Window()->PostMessage(kMsgShowAccounts);
+				if ((buttons & B_SECONDARY_MOUSE_BUTTON) != 0)
+					ShowAccountMenu(row, ConvertToScreen(where));
+				else
+					Window()->PostMessage(kMsgShowAccounts);
 				return;
 			}
 			float left = 18 + row.depth * 16;
@@ -851,6 +909,40 @@ public:
 		}
 	}
 
+	void ShowAccountMenu(const Row& row, BPoint screen)
+	{
+		AccountType type = AccountType::Local;
+		{
+			std::lock_guard<std::recursive_mutex> lock(TheApp()->Store().Mutex());
+			Account* account = TheApp()->Store().FindAccount(row.id);
+			if (account == nullptr)
+				return;
+			type = account->type;
+		}
+		BPopUpMenu* menu = new BPopUpMenu("account", false, false);
+		if (type == AccountType::Local) {
+			BMessage* calendar = new BMessage(kMsgAccountMenu);
+			calendar->AddString("account", row.id.c_str());
+			calendar->AddString("kind", "calendar");
+			menu->AddItem(new BMenuItem("New Calendar…", calendar));
+		}
+		if (type == AccountType::Local || type == AccountType::Todoist
+			|| type == AccountType::Google) {
+			BMessage* list = new BMessage(kMsgAccountMenu);
+			list->AddString("account", row.id.c_str());
+			list->AddString("kind", "list");
+			menu->AddItem(new BMenuItem(type == AccountType::Todoist
+				? "New Project…" : "New Task List…", list));
+		}
+		if (menu->CountItems() > 0)
+			menu->AddSeparatorItem();
+		menu->AddItem(new BMenuItem("Accounts…", new BMessage(kMsgShowAccounts)));
+		menu->SetTargetForItems(this);
+		menu->ItemAt(menu->CountItems() - 1)->SetTarget(Window());
+		menu->SetAsyncAutoDestruct(true);
+		menu->Go(screen, true, true, true);
+	}
+
 	void ShowMenu(const Row& row, BPoint screen)
 	{
 		BPopUpMenu* menu = new BPopUpMenu("calendar", false, false);
@@ -875,6 +967,42 @@ public:
 
 	void MessageReceived(BMessage* message) override
 	{
+		if (message->what == kMsgAccountMenu) {
+			BMessage* reply = new BMessage(kMsgCreateCollection);
+			reply->AddString("account", message->GetString("account", ""));
+			std::string kind = message->GetString("kind", "list");
+			reply->AddString("kind", kind.c_str());
+			NamePrompt* prompt = new NamePrompt(BMessenger(this), reply,
+				kind == "calendar" ? "New Calendar" : "New List", "Name:");
+			prompt->Show();
+			return;
+		}
+		if (message->what == kMsgCreateCollection) {
+			static const uint32_t kColors[] = {0xe8504a, 0xf09a37, 0x34c759, 0x3b8ced,
+				0xaf52de, 0xff2d55, 0x5ac8fa, 0xa2845e};
+			std::string accountId = message->GetString("account", "");
+			std::string kind = message->GetString("kind", "list");
+			Store& store = TheApp()->Store();
+			{
+				std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+				Account* account = store.FindAccount(accountId);
+				if (account == nullptr)
+					return;
+				Calendar calendar;
+				calendar.accountId = accountId;
+				calendar.name = message->GetString("name", "Untitled");
+				calendar.events = kind == "calendar";
+				calendar.tasks = kind != "calendar";
+				calendar.color = kColors[store.Calendars().size() % 8];
+				calendar.order = 1000 + (int)store.Calendars().size();
+				calendar.pendingCreate = account->type != AccountType::Local;
+				store.AddCalendar(calendar);
+			}
+			store.Changed();
+			TheApp()->ScheduleSave();
+			TheApp()->Sync().Request(accountId, false, 300);
+			return;
+		}
 		if (message->what != kMsgCalendarMenu) {
 			BView::MessageReceived(message);
 			return;

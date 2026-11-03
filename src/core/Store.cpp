@@ -116,7 +116,7 @@ CalendarToJson(const Calendar& c)
 		{"tasks", c.tasks}, {"visible", c.visible}, {"readOnly", c.readOnly},
 		{"primary", c.primary}, {"parent", c.parentId}, {"order", c.order},
 		{"ctag", c.ctag}, {"syncToken", c.syncToken},
-		{"defaultAlarms", c.defaultAlarms}};
+		{"defaultAlarms", c.defaultAlarms}, {"pendingCreate", c.pendingCreate}};
 }
 
 
@@ -139,6 +139,7 @@ CalendarFromJson(const json& j)
 	c.ctag = Str(j, "ctag");
 	c.syncToken = Str(j, "syncToken");
 	c.defaultAlarms = Ints(j, "defaultAlarms");
+	c.pendingCreate = Bool(j, "pendingCreate");
 	return c;
 }
 
@@ -1347,6 +1348,11 @@ Store::UpdateTask(const Task& edited)
 			*existing = edited;
 			existing->revision = revision + 1;
 			existing->updated = Now();
+			// A subtask moved away from its parent's list stands alone.
+			Task* parent = existing->parentId.empty() ? nullptr
+				: FindTask(existing->parentId);
+			if (parent != nullptr && parent->calendarId != existing->calendarId)
+				existing->parentId.clear();
 			if (crossAccount) {
 				existing->remoteId.clear();
 				existing->etag.clear();

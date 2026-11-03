@@ -61,6 +61,7 @@ struct Calendar {
 	std::string ctag;		// CalDAV getctag / sync-token
 	std::string syncToken;	// Google nextSyncToken
 	std::vector<int> defaultAlarms;	// minutes before (Google default reminders)
+	bool pendingCreate = false;	// made in airCal, not on the server yet
 };
 
 // One event. A recurring series is a master (rrule set) plus overrides: events
