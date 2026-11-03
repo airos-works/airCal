@@ -111,6 +111,8 @@ private:
 	CalendarView* fYearView = nullptr;
 	CalendarView* fTasksView = nullptr;
 	BMenuItem* fShowCompletedItem = nullptr;
+	BMenuItem* fUndoItem = nullptr;
+	BMenuItem* fRedoItem = nullptr;
 	BMenuItem* fShowSidebarItem = nullptr;
 	BMenuItem* fViewItems[5] = {};
 

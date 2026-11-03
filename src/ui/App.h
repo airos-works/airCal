@@ -5,6 +5,7 @@
 #include <MessageRunner.h>
 
 #include "core/Store.h"
+#include "core/Undo.h"
 #include "sync/SyncEngine.h"
 
 #include <memory>
@@ -32,6 +33,7 @@ public:
 	aircal::SyncEngine& Sync() { return *fSync; }
 	aircal::Secrets& Secrets() { return *fSecrets; }
 	aircal::Http& Http();
+	aircal::UndoStack& Undo() { return fUndo; }
 	// ~/config/settings (B_USER_SETTINGS_DIRECTORY) and airCal's folder in it.
 	const std::string& SettingsRoot() const { return fSettingsRoot; }
 	const std::string& DataDirectory() const { return fDataDirectory; }
@@ -51,6 +53,7 @@ private:
 	std::unique_ptr<aircal::Secrets> fSecrets;
 	std::unique_ptr<aircal::CurlHttp> fHttp;
 	std::unique_ptr<aircal::SyncEngine> fSync;
+	aircal::UndoStack fUndo;
 	MainWindow* fWindow = nullptr;
 	BMessageRunner* fSaveRunner = nullptr;
 	BMessageRunner* fAlarmRunner = nullptr;

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace aircal {
 
@@ -94,6 +95,9 @@ int ZoneOffset(Instant instant, const std::string& tzid = "");
 inline Date LocalDate(Instant t) { return ToWall(t).date; }
 // Local midnight at the start of a date.
 inline Instant StartOfDay(const Date& d) { return ToInstant(DateTime(d)); }
+
+// Every "Area/City" zone ICU knows, sorted.
+std::vector<std::string> AllZones();
 
 Instant Now();
 Date Today();

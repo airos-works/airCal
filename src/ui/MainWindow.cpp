@@ -24,6 +24,9 @@
 #include <PopUpMenu.h>
 #include <Screen.h>
 #include <SplitView.h>
+#include <TextView.h>
+
+#include <set>
 
 #include <cstdio>
 #include <cstdlib>
@@ -41,7 +44,9 @@ enum {
 	kMsgContextSubtask = 'cxst',
 	kMsgExportRef = 'exrf',
 	kMsgFocusSearch = 'fsrh',
-	kMsgFocusEntry = 'fent'
+	kMsgFocusEntry = 'fent',
+	kMsgUndo = 'undo',
+	kMsgRedo = 'redo'
 };
 
 
@@ -180,6 +185,11 @@ MainWindow::BuildMenus(BMenuBar* bar)
 	bar->AddItem(file);
 
 	BMenu* edit = new BMenu("Edit");
+	fUndoItem = new BMenuItem("Undo", new BMessage(kMsgUndo), 'Z');
+	fRedoItem = new BMenuItem("Redo", new BMessage(kMsgRedo), 'Z', B_SHIFT_KEY);
+	edit->AddItem(fUndoItem);
+	edit->AddItem(fRedoItem);
+	edit->AddSeparatorItem();
 	edit->AddItem(new BMenuItem("Cut", new BMessage(B_CUT), 'X'));
 	edit->AddItem(new BMenuItem("Copy", new BMessage(B_COPY), 'C'));
 	edit->AddItem(new BMenuItem("Paste", new BMessage(B_PASTE), 'V'));
@@ -244,6 +254,15 @@ MainWindow::MenusBeginning()
 		showCompleted = TheApp()->Store().Prefs().showCompleted;
 	}
 	fShowCompletedItem->SetMarked(showCompleted);
+	// Text fields keep their own undo.
+	bool text = dynamic_cast<BTextView*>(CurrentFocus()) != nullptr;
+	aircal::UndoStack& undo = TheApp()->Undo();
+	fUndoItem->SetLabel(text || !undo.CanUndo() ? "Undo"
+		: ("Undo " + undo.UndoName()).c_str());
+	fUndoItem->SetEnabled(text || undo.CanUndo());
+	fRedoItem->SetLabel(text || !undo.CanRedo() ? "Redo"
+		: ("Redo " + undo.RedoName()).c_str());
+	fRedoItem->SetEnabled(!text && undo.CanRedo());
 	fShowSidebarItem->SetMarked(!fSidebarHidden);
 	const char* modes[] = {"day", "week", "month", "year", "tasks"};
 	for (int i = 0; i < 5; i++)
@@ -448,6 +467,7 @@ MainWindow::ToggleTask(const std::string& taskId, bool completed)
 		if (list != nullptr && list->readOnly)
 			return;
 		calendar = task->calendarId;
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), completed ? "Complete Task" : "Reopen Task");
 		store.SetTaskCompleted(taskId, completed);
 	}
 	TheApp()->RequestPush(calendar);
@@ -472,7 +492,10 @@ MainWindow::MoveEvent(const DisplayEvent& event, Instant start, Instant end,
 		if (!AskEditScope(this, false, scope))
 			return;
 	}
-	MoveOccurrence(store, ref, start, end, allDay, date, days, scope);
+	{
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Move Event");
+		MoveOccurrence(store, ref, start, end, allDay, date, days, scope);
+	}
 	TheApp()->RequestPush(event.calendarId);
 	TheApp()->ScheduleSave();
 }
@@ -494,7 +517,10 @@ MainWindow::DeleteEvent(const DisplayEvent& event)
 		if (!AskEditScope(this, true, scope))
 			return;
 	}
-	DeleteOccurrence(store, ref, scope);
+	{
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Delete Event");
+		DeleteOccurrence(store, ref, scope);
+	}
 	fSelection = Selection();
 	TheApp()->RequestPush(event.calendarId);
 	TheApp()->ScheduleSave();
@@ -517,7 +543,10 @@ MainWindow::DeleteSelection()
 				return;
 			calendar = task->calendarId;
 		}
-		store.DeleteTask(fSelection.taskId);
+		{
+			aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Delete Task");
+			store.DeleteTask(fSelection.taskId);
+		}
 		fSelection = Selection();
 		TheApp()->RequestPush(calendar);
 		TheApp()->ScheduleSave();
@@ -633,6 +662,7 @@ MainWindow::QuickEntry(const std::string& text)
 	std::string calendarId;
 	{
 		std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), result.isTask ? "New Task" : "New Event");
 		Calendar* target = nullptr;
 		if (!result.calendarHint.empty()) {
 			std::string hint = result.calendarHint;
@@ -933,7 +963,11 @@ MainWindow::MessageReceived(BMessage* message)
 		case kMsgContextDuplicate:
 			if (fSelection.kind == Selection::EventItem) {
 				std::string calendar;
-				std::string id = DuplicateEvent(TheApp()->Store(), fSelection.ref);
+				std::string id;
+				{
+					aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Duplicate Event");
+					id = DuplicateEvent(TheApp()->Store(), fSelection.ref);
+				}
 				{
 					std::lock_guard<std::recursive_mutex> lock(
 						TheApp()->Store().Mutex());
@@ -980,6 +1014,7 @@ MainWindow::MessageReceived(BMessage* message)
 				std::string calendar;
 				{
 					std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+					aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Change Due Date");
 					Task* task = store.FindTask(fSelection.taskId);
 					if (task == nullptr)
 						break;
@@ -1013,6 +1048,7 @@ MainWindow::MessageReceived(BMessage* message)
 				std::string from;
 				{
 					std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+					aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Move to Calendar");
 					Event* master = store.FindEvent(fSelection.ref.eventId);
 					if (master == nullptr || master->calendarId == target)
 						break;
@@ -1035,6 +1071,26 @@ MainWindow::MessageReceived(BMessage* message)
 		case kMsgItemSaved:
 			ReloadAll();
 			break;
+		case kMsgUndo:
+		case kMsgRedo:
+		{
+			BTextView* text = dynamic_cast<BTextView*>(CurrentFocus());
+			if (text != nullptr) {
+				if (message->what == kMsgUndo)
+					PostMessage(B_UNDO, text);
+				break;
+			}
+			aircal::UndoStack& undo = TheApp()->Undo();
+			std::set<std::string> calendars = message->what == kMsgUndo
+				? undo.Undo(TheApp()->Store()) : undo.Redo(TheApp()->Store());
+			for (const std::string& calendar : calendars)
+				TheApp()->RequestPush(calendar);
+			if (!calendars.empty()) {
+				fSelection = Selection();
+				TheApp()->ScheduleSave();
+			}
+			break;
+		}
 		case kMsgTaskFilter:
 			PostMessage(message, fTasksView);
 			break;

@@ -14,6 +14,7 @@ CopyContent(Event& to, const Event& from)
 	to.notes = from.notes;
 	to.url = from.url;
 	to.alarms = from.alarms;
+	to.attendees = from.attendees;
 	to.tentative = from.tentative;
 }
 

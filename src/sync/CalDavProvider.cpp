@@ -456,6 +456,10 @@ CalDavProvider::PushEvents(const Calendar& calendar)
 		}
 		if (master.uid.empty())
 			master.uid = NewId() + "@aircal";
+		// Invitations need an organizer; the account's address is ours.
+		if (!master.attendees.empty() && master.organizer.empty()
+			&& fUser.find('@') != std::string::npos)
+			master.organizer = fUser;
 		std::string href = master.remoteId;
 		bool create = href.empty();
 		if (create) {

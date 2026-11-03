@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <set>
 
 namespace aircal {
@@ -701,6 +702,77 @@ SameRecurrence(const Component& component, const Event& override,
 }
 
 
+// "Name <mail>", "mail" or "mailto:mail" -> lower-case mail and the name.
+void
+SplitPerson(const std::string& text, std::string& mail, std::string& name)
+{
+	std::string value = Trim(text);
+	name.clear();
+	size_t open = value.find('<');
+	size_t close = value.rfind('>');
+	if (open != std::string::npos && close != std::string::npos && close > open) {
+		name = Trim(value.substr(0, open));
+		value = value.substr(open + 1, close - open - 1);
+	}
+	if (StartsWithIgnoreCase(value, "mailto:"))
+		value = value.substr(7);
+	mail = value;
+	for (char& c : mail)
+		c = (char)tolower((unsigned char)c);
+}
+
+
+// ATTENDEEs from event.attendees: existing ones keep their parameters
+// (PARTSTAT and so on), new ones are invited; ORGANIZER from event.organizer
+// when there is none yet.
+void
+WriteAttendees(Component& component, const Event& event)
+{
+	std::vector<Property> kept;
+	std::map<std::string, Property> existing;
+	bool hadAttendees = component.Find("ATTENDEE") != nullptr;
+	for (const Property* attendee : component.FindAll("ATTENDEE")) {
+		std::string mail, name;
+		SplitPerson(attendee->value, mail, name);
+		existing[mail] = *attendee;
+	}
+	std::string organizerMail, organizerName;
+	SplitPerson(event.organizer, organizerMail, organizerName);
+	for (const std::string& person : event.attendees) {
+		std::string mail, name;
+		SplitPerson(person, mail, name);
+		if (mail.empty())
+			continue;
+		auto found = existing.find(mail);
+		if (found != existing.end()) {
+			kept.push_back(found->second);
+			continue;
+		}
+		Property attendee;
+		attendee.name = "ATTENDEE";
+		if (!name.empty())
+			attendee.SetParam("CN", name);
+		attendee.SetParam("ROLE", "REQ-PARTICIPANT");
+		attendee.SetParam("PARTSTAT", mail == organizerMail ? "ACCEPTED" : "NEEDS-ACTION");
+		if (mail != organizerMail)
+			attendee.SetParam("RSVP", "TRUE");
+		attendee.value = "mailto:" + mail;
+		kept.push_back(attendee);
+	}
+	component.Remove("ATTENDEE");
+	for (const Property& attendee : kept)
+		component.properties.push_back(attendee);
+	if (!kept.empty() && component.Find("ORGANIZER") == nullptr
+		&& !organizerMail.empty()) {
+		Property& organizer = component.Add("ORGANIZER", "mailto:" + organizerMail);
+		if (!organizerName.empty())
+			organizer.SetParam("CN", organizerName);
+	}
+	if (kept.empty() && hadAttendees)
+		component.Remove("ORGANIZER");
+}
+
+
 void
 WriteEventFields(Component& component, const Event& event, const Event& master,
 	const std::string& uid, bool isNew, bool isOverride,
@@ -765,6 +837,7 @@ WriteEventFields(Component& component, const Event& event, const Event& master,
 
 	WriteAlarms(component, event.alarms, event.title, true, event.start,
 		event.end - event.start, calendar);
+	WriteAttendees(component, event);
 }
 
 

@@ -483,6 +483,43 @@ GoogleProvider::EventToJson(const Event& e, bool isOverride)
 		else
 			j["recurrence"] = json::array();
 	}
+	// Invitees: known ones keep their replies, new ones are added.
+	json previous = json::parse(e.raw, nullptr, false);
+	std::map<std::string, json> known;
+	if (previous.is_object() && previous.contains("attendees")
+		&& previous["attendees"].is_array()) {
+		for (auto& attendee : previous["attendees"]) {
+			std::string mail = JStr(attendee, "email");
+			for (char& c : mail)
+				c = (char)tolower((unsigned char)c);
+			known[mail] = attendee;
+		}
+	}
+	if (!e.attendees.empty() || !known.empty()) {
+		json attendees = json::array();
+		for (const std::string& person : e.attendees) {
+			std::string mail = person, name;
+			size_t open = person.find('<'), close = person.rfind('>');
+			if (open != std::string::npos && close != std::string::npos && close > open) {
+				name = person.substr(0, open);
+				while (!name.empty() && name.back() == ' ')
+					name.pop_back();
+				mail = person.substr(open + 1, close - open - 1);
+			}
+			for (char& c : mail)
+				c = (char)tolower((unsigned char)c);
+			auto found = known.find(mail);
+			if (found != known.end())
+				attendees.push_back(found->second);
+			else {
+				json attendee{{"email", mail}};
+				if (!name.empty())
+					attendee["displayName"] = name;
+				attendees.push_back(attendee);
+			}
+		}
+		j["attendees"] = attendees;
+	}
 	json overrides = json::array();
 	for (int minutes : e.alarms)
 		overrides.push_back(json{{"method", "popup"}, {"minutes", minutes}});
@@ -559,13 +596,15 @@ GoogleProvider::PushEvents(Calendar& calendar)
 					result = json::object();
 				} else {
 					json body = EventToJson(event, true);
-					result = Api("PATCH", base + "/" + UrlEncode(id), &body);
+					result = Api("PATCH", base + "/" + UrlEncode(id)
+						+ (body.contains("attendees") ? "?sendUpdates=all" : ""), &body);
 				}
 				if (result.is_object() && result.empty())
 					result["id"] = id;
 			} else if (event.pending == Pending::Create || event.remoteId.empty()) {
 				json body = EventToJson(event, false);
-				result = Api("POST", base, &body);
+				result = Api("POST", base + (body.contains("attendees")
+					? "?sendUpdates=all" : ""), &body);
 			} else {
 				// Moved from another calendar of this account?
 				json raw = json::parse(event.raw, nullptr, false);
@@ -578,7 +617,8 @@ GoogleProvider::PushEvents(Calendar& calendar)
 						nullptr);
 				}
 				json body = EventToJson(event, false);
-				result = Api("PATCH", base + "/" + UrlEncode(event.remoteId), &body,
+				result = Api("PATCH", base + "/" + UrlEncode(event.remoteId)
+					+ (body.contains("attendees") ? "?sendUpdates=all" : ""), &body,
 					true);
 				if (result.is_null()) {
 					// Deleted on the server meanwhile: create it again.

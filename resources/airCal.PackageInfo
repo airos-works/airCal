@@ -1,5 +1,5 @@
 name aircal
-version 1.0.0-2
+version 1.0.0-3
 architecture x86_64
 summary "Calendars and to-dos: Google Calendar, CalDAV, Google Tasks and Todoist"
 description "airCal is a calendar and to-do app for air/OS in the style of Fantastical. Type events and tasks in plain English (\"Lunch with Sam tomorrow at noon\", \"todo Pay rent Friday !!\"), see them in day, week, month and year views with a mini month and an upcoming list, and keep them in sync with Google Calendar, any CalDAV server (iCloud, Fastmail, Nextcloud, Radicale...), Google Tasks and Todoist. It follows the system's light and dark appearance, shows alerts as notifications and works offline, sending changes when the network is back."

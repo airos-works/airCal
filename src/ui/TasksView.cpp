@@ -664,6 +664,7 @@ TasksView::MessageReceived(BMessage* message)
 			std::string calendarId;
 			{
 				std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+				aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "New Task");
 				Calendar* list = fFilter.compare(0, 5, "list:") == 0
 					? store.FindCalendar(fFilter.substr(5)) : nullptr;
 				if (list == nullptr || list->readOnly)

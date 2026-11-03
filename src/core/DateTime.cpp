@@ -1,8 +1,10 @@
 #include "DateTime.h"
 
 #include <unicode/ucal.h>
+#include <unicode/uenum.h>
 #include <unicode/ustring.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -413,6 +415,28 @@ DateTime
 ToWall(Instant instant, const std::string& tzid)
 {
 	return DateTime::FromUtcSeconds(instant + ZoneOffset(instant, tzid));
+}
+
+
+std::vector<std::string>
+AllZones()
+{
+	std::vector<std::string> zones;
+	UErrorCode status = U_ZERO_ERROR;
+	UEnumeration* all = ucal_openTimeZoneIDEnumeration(UCAL_ZONE_TYPE_CANONICAL_LOCATION,
+		nullptr, nullptr, &status);
+	if (U_FAILURE(status) || all == nullptr)
+		return zones;
+	int32_t length = 0;
+	const char* id;
+	while ((id = uenum_next(all, &length, &status)) != nullptr && U_SUCCESS(status)) {
+		std::string zone(id, length);
+		if (zone.find('/') != std::string::npos && zone.compare(0, 4, "Etc/") != 0)
+			zones.push_back(zone);
+	}
+	uenum_close(all);
+	std::sort(zones.begin(), zones.end());
+	return zones;
 }
 
 

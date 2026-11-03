@@ -461,6 +461,32 @@ TestGoogle(PlainHttp& http, MemorySecrets& secrets, const std::string& dir)
 		&& store.FindEvent(eventId)->title == "airCal design review",
 		"incremental sync picks up a remote rename");
 
+	// Invitees reach Google, keeping the replies already there.
+	Event meeting;
+	meeting.calendarId = work->id;
+	meeting.title = "Planning with Ana";
+	meeting.start = ToInstant(DateTime(today.AddDays(2), 15, 0));
+	meeting.end = meeting.start + 3600;
+	meeting.attendees = {"Ana Lima <ana@example.org>"};
+	std::string meetingId = SaveEvent(store, none, meeting, EditScope::All);
+	Sync(store, http, secrets, id);
+	json googleState = AdminState(http);
+	bool hasInvite = googleState.dump().find("ana@example.org") != std::string::npos;
+	EXPECT(hasInvite, "invitee sent to Google");
+	Event* sent = store.FindEvent(meetingId);
+	if (sent != nullptr) {
+		Event more = *sent;
+		more.attendees.push_back("cy@example.org");
+		store.UpdateEvent(more);
+		Sync(store, http, secrets, id);
+		googleState = AdminState(http);
+		EXPECT(googleState.dump().find("cy@example.org") != std::string::npos
+			&& googleState.dump().find("ana@example.org") != std::string::npos,
+			"second invitee added, first kept");
+	}
+	store.DeleteEvent(meetingId);
+	Sync(store, http, secrets, id);
+
 	// "All events" delete.
 	OccurrenceRef all;
 	all.eventId = eventId;
@@ -693,6 +719,150 @@ TestCalDav(PlainHttp& http, MemorySecrets& secrets, const std::string& dir)
 }
 
 
+// Any CalDAV server (AIRCAL_CALDAV_URL, _USER, _PASSWORD): discovery,
+// a recurring event with an override and an exclusion, a series cut short,
+// a VTODO, and clean-up, checked from a second client.
+static void
+TestCalDavGeneric(PlainHttp& http, MemorySecrets& secrets, const std::string& dir)
+{
+	const char* url = getenv("AIRCAL_CALDAV_URL");
+	if (url == nullptr)
+		return;
+	std::cerr << "\n== CalDAV (" << url << ")\n";
+	Store store(dir + "/generic");
+	store.Load();
+	Account account;
+	account.type = AccountType::CalDAV;
+	account.name = "generic";
+	account.user = getenv("AIRCAL_CALDAV_USER") ? getenv("AIRCAL_CALDAV_USER") : "user";
+	account.server = url;
+	std::string id = store.AddAccount(account).id;
+	Credentials credentials;
+	credentials.password = getenv("AIRCAL_CALDAV_PASSWORD")
+		? getenv("AIRCAL_CALDAV_PASSWORD") : "secret";
+	credentials.Save(secrets, id);
+	Sync(store, http, secrets, id);
+	Calendar* events = nullptr;
+	Calendar* tasks = nullptr;
+	for (Calendar* calendar : store.CalendarsOf(id)) {
+		if (calendar->events && !calendar->readOnly && events == nullptr)
+			events = calendar;
+		if (calendar->tasks && !calendar->readOnly && tasks == nullptr)
+			tasks = calendar;
+	}
+	EXPECT(events != nullptr, "found a writable event calendar ("
+		+ store.FindAccount(id)->principal + ")");
+	if (events == nullptr)
+		return;
+	Date today = Today();
+	Event event;
+	event.calendarId = events->id;
+	event.title = "Generic weekly";
+	event.tzid = "Europe/Berlin";
+	event.start = ToInstant(DateTime(today.AddDays(1), 9, 0), "Europe/Berlin");
+	event.end = event.start + 3600;
+	event.rrule = "FREQ=WEEKLY";
+	event.alarms = {15};
+	OccurrenceRef none;
+	std::string eventId = SaveEvent(store, none, event, EditScope::All);
+	Sync(store, http, secrets, id);
+	OccurrenceRef second;
+	second.eventId = eventId;
+	second.originalStart = event.start + 7 * 86400;
+	Event changed;
+	ResolveOccurrence(store, second, changed);
+	changed.location = "Moved room";
+	changed.start += 3600;
+	changed.end += 3600;
+	SaveEvent(store, second, changed, EditScope::This);
+	OccurrenceRef third = second;
+	third.originalStart = event.start + 14 * 86400;
+	DeleteOccurrence(store, third, EditScope::This);
+	Sync(store, http, secrets, id);
+	EXPECT(PendingCount(store) == 0, "event, override and exclusion pushed");
+
+	Store check(dir + "/generic-check");
+	check.Load();
+	Account copy = *store.FindAccount(id);
+	check.AddAccount(copy);
+	Sync(check, http, secrets, id);
+	int count = 0, moved = 0;
+	for (auto& item : check.EventsBetween(event.start - 3600, event.start + 22 * 86400)) {
+		if (item.title != "Generic weekly")
+			continue;
+		count++;
+		if (item.location == "Moved room" && ToWall(item.start, "Europe/Berlin").hour == 10)
+			moved++;
+	}
+	EXPECT(count == 3, "second client sees 3 of 4 weeks: " + std::to_string(count));
+	EXPECT(moved == 1, "override at 10:00 Berlin time in the moved room");
+
+	OccurrenceRef fourth = second;
+	fourth.originalStart = event.start + 21 * 86400;
+	DeleteOccurrence(store, fourth, EditScope::Future);
+	Sync(store, http, secrets, id);
+	Sync(check, http, secrets, id, true);
+	int remaining = 0;
+	for (auto& item : check.EventsBetween(event.start - 3600, event.start + 90 * 86400))
+		remaining += item.title == "Generic weekly";
+	EXPECT(remaining == 2, "series ended: " + std::to_string(remaining));
+
+	// Invitees.
+	Event meeting;
+	meeting.calendarId = events->id;
+	meeting.title = "Generic meeting";
+	meeting.start = ToInstant(DateTime(today.AddDays(3), 14, 0));
+	meeting.end = meeting.start + 1800;
+	meeting.attendees = {"Ana Lima <ana@example.org>", "bob@example.org"};
+	std::string meetingId = SaveEvent(store, none, meeting, EditScope::All);
+	Sync(store, http, secrets, id);
+	Sync(check, http, secrets, id, true);
+	size_t invited = 0;
+	for (auto& item : check.Events()) {
+		if (item->title == "Generic meeting")
+			invited = item->attendees.size();
+	}
+	EXPECT(invited == 2, "invitees on the server: " + std::to_string(invited));
+	store.DeleteEvent(meetingId);
+
+	std::string taskId;
+	if (tasks != nullptr) {
+		Task task;
+		task.calendarId = tasks->id;
+		task.title = "Generic to-do";
+		task.hasDue = true;
+		task.dueDate = today.AddDays(2);
+		task.priority = 4;
+		store.UpdateTask(task);
+		Sync(store, http, secrets, id);
+		for (auto& item : store.Tasks()) {
+			if (item->title == task.title)
+				taskId = item->id;
+		}
+		store.SetTaskCompleted(taskId, true);
+		Sync(store, http, secrets, id);
+		Sync(check, http, secrets, id, true);
+		bool ok = false;
+		for (auto& item : check.Tasks()) {
+			if (item->title == task.title)
+				ok = item->completed && item->priority == 4 && item->dueDate == task.dueDate;
+		}
+		EXPECT(ok, "VTODO round trip");
+	}
+	store.DeleteEvent(eventId);
+	if (!taskId.empty())
+		store.DeleteTask(taskId);
+	Sync(store, http, secrets, id);
+	Sync(check, http, secrets, id, true);
+	int left = 0;
+	for (auto& item : check.Events())
+		left += item->title == "Generic weekly";
+	for (auto& item : check.Tasks())
+		left += item->title == "Generic to-do";
+	EXPECT(left == 0, "cleaned up on the server");
+}
+
+
 int
 main(int argc, char** argv)
 {
@@ -704,22 +874,24 @@ main(int argc, char** argv)
 	if (getenv("TMPDIR") != nullptr)
 		dir = std::string(getenv("TMPDIR")) + "/aircal-integration-" + std::to_string(getpid());
 	mkdir(dir.c_str(), 0700);
+	std::string only = argc > 1 ? argv[1] : "";
 	PlainHttp http;
 	HttpRequest reset;
 	reset.method = "POST";
 	reset.url = sBase + "/admin/reset?auth=1";
-	if (http.Perform(reset, nullptr).status != 200) {
+	if (only != "generic" && http.Perform(reset, nullptr).status != 200) {
 		std::cerr << "fake-cloud is not running at " << sBase << "\n";
 		return 2;
 	}
 	MemorySecrets secrets;
-	std::string only = argc > 1 ? argv[1] : "";
 	if (only.empty() || only == "todoist")
 		TestTodoist(http, secrets, dir);
 	if (only.empty() || only == "google")
 		TestGoogle(http, secrets, dir);
 	if (only.empty() || only == "caldav")
 		TestCalDav(http, secrets, dir);
+	if (only.empty() || only == "generic")
+		TestCalDavGeneric(http, secrets, dir);
 	std::cerr << "\n" << sChecks << " checks, " << sFailures << " failures, "
 		<< http.requests << " requests\n";
 	return sFailures == 0 ? 0 : 1;

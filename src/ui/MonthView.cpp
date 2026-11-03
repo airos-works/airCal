@@ -539,6 +539,7 @@ MonthView::MouseUp(BPoint where)
 			std::string calendar;
 			{
 				std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+				aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Move Task");
 				Task* task = store.FindTask(item.task.taskId);
 				if (task != nullptr && task->dueDate != target) {
 					Task edited = *task;

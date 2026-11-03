@@ -16,6 +16,7 @@
 #include <CheckBox.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
+#include <MenuItem.h>
 #include <PopUpMenu.h>
 #include <Screen.h>
 #include <ScrollView.h>
@@ -216,7 +217,13 @@ PostToMain(BMessage* message)
 void
 PlaceWindow(BWindow* window, float anchorX, float anchorY)
 {
-	window->ResizeToPreferred();
+	// Lay out first: the preferred size is only right once the views know
+	// their fonts and contents.
+	if (window->Lock()) {
+		window->Layout(true);
+		window->ResizeToPreferred();
+		window->Unlock();
+	}
 	if (anchorX < 0) {
 		BWindow* main = MainBWindow();
 		if (main != NULL)
@@ -237,8 +244,18 @@ PlaceWindow(BWindow* window, float anchorX, float anchorY)
 	float top = anchorY - 48;
 	left = std::max(screen.left + margin,
 		std::min(left, screen.right - margin - frame.Width()));
-	top = std::max(screen.top + 32,
-		std::min(top, screen.bottom - margin - frame.Height()));
+	// The window tab and border sit outside the frame.
+	BRect decorated = frame;
+	if (window->Lock()) {
+		BRect decor = window->DecoratorFrame();
+		if (decor.IsValid())
+			decorated = decor;
+		window->Unlock();
+	}
+	float above = frame.top - decorated.top;
+	float below = decorated.bottom - frame.bottom;
+	top = std::max(screen.top + margin + above,
+		std::min(top, screen.bottom - margin - below - frame.Height()));
 	window->MoveTo(left, top);
 	window->MoveOnScreen(B_DO_NOT_RESIZE_TO_FIT);
 }
@@ -504,6 +521,7 @@ enum {
 	kMsgCalendar = 'ecal',
 	kMsgUrlModified = 'eurl',
 	kMsgJoin = 'ejoi',
+	kMsgZone = 'ezon',
 	kMsgSave = 'esav',
 	kMsgDelete = 'edel',
 	kMsgCancel = 'ecan'
@@ -547,6 +565,8 @@ public:
 	~EventEditorWindow() override;
 
 	void MessageReceived(BMessage* message) override;
+	void DispatchMessage(BMessage* message, BHandler* target) override;
+	void FrameResized(float width, float height) override;
 
 private:
 	void BuildLayout();
@@ -557,6 +577,8 @@ private:
 	void NormalizeField(BTextControl* control, bool isDate);
 	void AllDayToggled();
 	void UpdateTimeVisibility();
+	void BuildZoneMenu();
+	void ZoneChosen(const std::string& zone);
 	void UpdateJoin();
 	std::string JoinUrl() const;
 	void CalendarChosen(const std::string& calendarId);
@@ -578,6 +600,7 @@ private:
 	int fInitialAlarm = -1;
 	int fAlarm = -1;
 	std::string fCalendarId;
+	std::string fZone;			// the zone times are shown and typed in ("" local)
 	int fDefaultDuration = 60;
 	Instant fLastStart = 0;
 	Date fLastStartDate;
@@ -595,6 +618,10 @@ private:
 	BMenuField* fAlarmField = NULL;
 	BPopUpMenu* fCalendarMenu = NULL;
 	BMenuField* fCalendarField = NULL;
+	BStringView* fZoneLabel = NULL;
+	BPopUpMenu* fZoneMenu = NULL;
+	BMenuField* fZoneField = NULL;
+	BTextControl* fInvitees = NULL;
 	BTextControl* fUrl = NULL;
 	BButton* fJoin = NULL;
 	BTextView* fNotes = NULL;
@@ -634,6 +661,10 @@ EventEditorWindow::EventEditorWindow(const OccurrenceRef& ref,
 			}
 		}
 	}
+	// Times show in the event's own zone when it has one other than ours.
+	if (!fEvent.allDay && !fEvent.tzid.empty() && fEvent.tzid != "UTC"
+		&& CanonicalZone(fEvent.tzid) != CanonicalZone(LocalZone()))
+		fZone = CanonicalZone(fEvent.tzid);
 	fInitialPreset = fPreset = PresetFromRule(fRule);
 	fInitialAlarm = fAlarm = fEvent.alarms.empty() ? -1 : fEvent.alarms[0];
 
@@ -663,7 +694,8 @@ EventEditorWindow::BuildLayout()
 	BFont titleFont(be_plain_font);
 	titleFont.SetSize(ceilf(titleFont.Size() * 1.45f));
 	titleFont.SetFace(B_BOLD_FACE);
-	fTitle = new BTextControl("title", NULL, fEvent.title.c_str(), NULL);
+	fTitle = new BTextControl("title", NULL, fEvent.title.c_str(),
+		NULL);
 	fTitle->SetFont(&titleFont);
 	fTitle->TextView()->SetFontAndColor(&titleFont);
 	fTitle->SetExplicitMinSize(BSize(320, B_SIZE_UNSET));
@@ -706,6 +738,20 @@ EventEditorWindow::BuildLayout()
 	AddCalendarItems(fCalendarMenu, false, fCalendarId, kMsgCalendar);
 	fCalendarField = new BMenuField("calendar", NULL, fCalendarMenu);
 
+	fZoneLabel = FieldLabel("Time zone:");
+	fZoneMenu = new BPopUpMenu("zone");
+	fZoneField = new BMenuField("zone", NULL, fZoneMenu);
+	BuildZoneMenu();
+
+	std::string invitees;
+	for (auto& attendee : fEvent.attendees)
+		invitees += (invitees.empty() ? "" : ", ") + attendee;
+	fInvitees = new BTextControl("invitees", NULL, invitees.c_str(),
+		NULL);
+	fInvitees->SetToolTip("E-mail addresses, separated by commas. Google and "
+		"CalDAV servers that schedule (iCloud, Nextcloud, Fastmail) send the "
+		"invitations.");
+
 	fUrl = new BTextControl("url", NULL, fEvent.url.c_str(), NULL);
 	fUrl->SetModificationMessage(new BMessage(kMsgUrlModified));
 	fJoin = new BButton("join", "Join", new BMessage(kMsgJoin));
@@ -743,20 +789,24 @@ EventEditorWindow::BuildLayout()
 			.Add(fEndTime)
 			.AddGlue()
 		.End()
-		.Add(FieldLabel("Repeat:"), 0, 3)
-		.Add(fRepeatField, 1, 3)
-		.Add(FieldLabel("Alert:"), 0, 4)
-		.Add(fAlarmField, 1, 4)
-		.Add(FieldLabel("Calendar:"), 0, 5)
-		.Add(fCalendarField, 1, 5)
-		.Add(FieldLabel("URL:"), 0, 6)
-		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 6)
+		.Add(fZoneLabel, 0, 3)
+		.Add(fZoneField, 1, 3)
+		.Add(FieldLabel("Repeat:"), 0, 4)
+		.Add(fRepeatField, 1, 4)
+		.Add(FieldLabel("Alert:"), 0, 5)
+		.Add(fAlarmField, 1, 5)
+		.Add(FieldLabel("Calendar:"), 0, 6)
+		.Add(fCalendarField, 1, 6)
+		.Add(FieldLabel("Invitees:"), 0, 7)
+		.Add(fInvitees, 1, 7)
+		.Add(FieldLabel("URL:"), 0, 8)
+		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 8)
 			.Add(fUrl)
 			.Add(fJoin)
 		.End()
-		.Add(FieldLabel("Notes:", true), 0, 7)
-		.Add(fNotesScroll, 1, 7);
-	int row = 8;
+		.Add(FieldLabel("Notes:", true), 0, 9)
+		.Add(fNotesScroll, 1, 9);
+	int row = 10;
 
 	// Who else is there (read-only; invitations are answered on the web).
 	if (!fEvent.organizer.empty()) {
@@ -764,26 +814,6 @@ EventEditorWindow::BuildLayout()
 			fEvent.organizer.c_str());
 		organizer->SetTruncation(B_TRUNCATE_END);
 		builder.Add(FieldLabel("Organizer:"), 0, row).Add(organizer, 1, row);
-		row++;
-	}
-	if (!fEvent.attendees.empty()) {
-		std::string all;
-		std::string tip;
-		for (auto& attendee : fEvent.attendees) {
-			if (!all.empty()) {
-				all += ", ";
-				tip += "\n";
-			}
-			all += attendee;
-			tip += attendee;
-		}
-		BStringView* attendees = new BStringView("attendees", all.c_str());
-		attendees->SetTruncation(B_TRUNCATE_END);
-		attendees->SetExplicitMinSize(BSize(100, B_SIZE_UNSET));
-		attendees->SetToolTip(tip.c_str());
-		std::string label = "Invitees (" + std::to_string(fEvent.attendees.size())
-			+ "):";
-		builder.Add(FieldLabel(label.c_str()), 0, row).Add(attendees, 1, row);
 		row++;
 	}
 	grid->GridLayout()->SetColumnWeight(0, 0);
@@ -831,8 +861,8 @@ EventEditorWindow::FillTimes()
 		endHour = end / 60;
 		endMinute = end % 60;
 	} else {
-		DateTime start = ToWall(fEvent.start);
-		DateTime end = ToWall(fEvent.end);
+		DateTime start = ToWall(fEvent.start, fZone);
+		DateTime end = ToWall(fEvent.end, fZone);
 		startDate = start.date;
 		startHour = start.hour;
 		startMinute = start.minute;
@@ -855,7 +885,7 @@ EventEditorWindow::RememberStart()
 	if (Format::ParseDate(fStartDate->Text(), date)) {
 		fLastStartDate = date;
 		if (Format::ParseTime(fStartTime->Text(), hour, minute))
-			fLastStart = ToInstant(DateTime(date, hour, minute));
+			fLastStart = ToInstant(DateTime(date, hour, minute), fZone);
 	}
 }
 
@@ -877,8 +907,8 @@ EventEditorWindow::Validate(bool mark)
 		if (allDay)
 			ordered = endDate >= startDate;
 		else {
-			ordered = ToInstant(DateTime(endDate, endHour, endMinute))
-				>= ToInstant(DateTime(startDate, startHour, startMinute));
+			ordered = ToInstant(DateTime(endDate, endHour, endMinute), fZone)
+				>= ToInstant(DateTime(startDate, startHour, startMinute), fZone);
 		}
 	}
 	if (mark) {
@@ -928,12 +958,12 @@ EventEditorWindow::StartCommitted()
 		int hour, minute, endHour, endMinute;
 		if (!Format::ParseTime(fStartTime->Text(), hour, minute))
 			return;
-		Instant start = ToInstant(DateTime(startDate, hour, minute));
+		Instant start = ToInstant(DateTime(startDate, hour, minute), fZone);
 		Instant delta = start - fLastStart;
 		if (delta != 0 && Format::ParseDate(fEndDate->Text(), endDate)
 			&& Format::ParseTime(fEndTime->Text(), endHour, endMinute)) {
-			Instant end = ToInstant(DateTime(endDate, endHour, endMinute)) + delta;
-			DateTime wall = ToWall(end);
+			Instant end = ToInstant(DateTime(endDate, endHour, endMinute), fZone) + delta;
+			DateTime wall = ToWall(end, fZone);
 			fEndDate->SetText(DateFieldText(wall.date).c_str());
 			fEndTime->SetText(TimeFieldText(wall.hour, wall.minute).c_str());
 		}
@@ -960,13 +990,109 @@ EventEditorWindow::AllDayToggled()
 		&& Format::ParseTime(fStartTime->Text(), hour, minute)
 		&& !Validate(false)) {
 		// Make the times consistent again.
-		Instant end = ToInstant(DateTime(startDate, hour, minute))
+		Instant end = ToInstant(DateTime(startDate, hour, minute), fZone)
 			+ fDefaultDuration * 60;
-		DateTime wall = ToWall(end);
+		DateTime wall = ToWall(end, fZone);
 		fEndDate->SetText(DateFieldText(wall.date).c_str());
 		fEndTime->SetText(TimeFieldText(wall.hour, wall.minute).c_str());
 	}
 	UpdateTimeVisibility();
+	RememberStart();
+	Validate(true);
+}
+
+
+void
+EventEditorWindow::DispatchMessage(BMessage* message, BHandler* target)
+{
+	// Return in a one-line field saves, as in Fantastical (the notes keep
+	// their new lines; the date and time fields first commit themselves).
+	if (message->what == B_KEY_DOWN && !fReadOnly) {
+		const char* bytes = NULL;
+		int32 modifiers = message->GetInt32("modifiers", 0);
+		if (message->FindString("bytes", &bytes) == B_OK && bytes[0] == B_ENTER
+			&& (modifiers & (B_SHIFT_KEY | B_OPTION_KEY)) == 0) {
+			BView* focus = CurrentFocus();
+			BTextControl* fields[] = {fTitle, fLocation, fInvitees, fUrl,
+				fStartDate, fStartTime, fEndDate, fEndTime};
+			for (BTextControl* field : fields) {
+				if (field != NULL && focus == field->TextView()) {
+					if (field == fStartDate || field == fStartTime)
+						StartCommitted();
+					PostMessage(kMsgSave);
+					return;
+				}
+			}
+		}
+	}
+	BWindow::DispatchMessage(message, target);
+}
+
+
+void
+EventEditorWindow::FrameResized(float width, float height)
+{
+	BWindow::FrameResized(width, height);
+	// Rows that come and go (time zone, all-day) must not push it off screen.
+	MoveOnScreen(B_DO_NOT_RESIZE_TO_FIT);
+}
+
+
+void
+EventEditorWindow::BuildZoneMenu()
+{
+	auto add = [&](BMenu* menu, const std::string& zone, const std::string& label) {
+		BMessage* message = new BMessage(kMsgZone);
+		message->AddString("zone", zone.c_str());
+		BMenuItem* item = new BMenuItem(label.c_str(), message);
+		item->SetMarked(zone == fZone);
+		menu->AddItem(item);
+	};
+	add(fZoneMenu, "", "Local (" + LocalZone() + ")");
+	if (!fZone.empty())
+		add(fZoneMenu, fZone, fZone);
+	fZoneMenu->AddSeparatorItem();
+	// Every zone, by region.
+	std::map<std::string, BMenu*> regions;
+	for (const std::string& zone : AllZones()) {
+		std::string region = zone.substr(0, zone.find('/'));
+		BMenu*& menu = regions[region];
+		if (menu == NULL)
+			menu = new BMenu(region.c_str());
+		std::string city = zone.substr(zone.find('/') + 1);
+		for (char& c : city) {
+			if (c == '_')
+				c = ' ';
+		}
+		BMessage* message = new BMessage(kMsgZone);
+		message->AddString("zone", zone.c_str());
+		menu->AddItem(new BMenuItem(city.c_str(), message));
+	}
+	for (auto& region : regions)
+		fZoneMenu->AddItem(region.second);
+	fZoneMenu->SetLabelFromMarked(false);
+	fZoneField->MenuItem()->SetLabel(fZone.empty()
+		? ("Local (" + LocalZone() + ")").c_str() : fZone.c_str());
+}
+
+
+void
+EventEditorWindow::ZoneChosen(const std::string& requested)
+{
+	// The typed wall-clock times stay; they now mean that zone's time.
+	std::string zone = requested.empty() ? std::string() : CanonicalZone(requested);
+	if (zone == CanonicalZone(LocalZone()))
+		zone.clear();
+	fZone = zone;
+	fZoneField->MenuItem()->SetLabel(fZone.empty()
+		? ("Local (" + LocalZone() + ")").c_str() : fZone.c_str());
+	for (int32 i = 0; i < fZoneMenu->CountItems(); i++) {
+		BMenuItem* item = fZoneMenu->ItemAt(i);
+		const char* value = NULL;
+		if (item->Submenu() == NULL && item->Message() != NULL
+			&& item->Message()->FindString("zone", &value) == B_OK)
+			item->SetMarked(fZone == value);
+	}
 	RememberStart();
 	Validate(true);
 }
@@ -978,6 +1104,8 @@ EventEditorWindow::UpdateTimeVisibility()
 	bool timed = fAllDay->Value() != B_CONTROL_ON;
 	SetVisible(fStartTime, timed);
 	SetVisible(fEndTime, timed);
+	SetVisible(fZoneField, timed);
+	SetVisible(fZoneLabel, timed);
 }
 
 
@@ -1046,6 +1174,8 @@ EventEditorWindow::ApplyReadOnly()
 	fTitle->SetEnabled(false);
 	fLocation->SetEnabled(false);
 	fAllDay->SetEnabled(false);
+	fZoneField->SetEnabled(false);
+	fInvitees->SetEnabled(false);
 	fStartDate->SetEnabled(false);
 	fStartTime->SetEnabled(false);
 	fEndDate->SetEnabled(false);
@@ -1079,6 +1209,20 @@ EventEditorWindow::Save()
 	edited.url = Trim(fUrl->Text());
 	edited.notes = fNotes->Text();
 	edited.calendarId = fCalendarId;
+	edited.attendees.clear();
+	{
+		std::string list = fInvitees->Text();
+		size_t start = 0;
+		while (start <= list.size()) {
+			size_t comma = list.find_first_of(",;\n", start);
+			if (comma == std::string::npos)
+				comma = list.size();
+			std::string one = Trim(list.substr(start, comma - start));
+			if (!one.empty() && one.find('@') != std::string::npos)
+				edited.attendees.push_back(one);
+			start = comma + 1;
+		}
+	}
 
 	bool allDay = fAllDay->Value() == B_CONTROL_ON;
 	Date startDate, endDate;
@@ -1093,8 +1237,8 @@ EventEditorWindow::Save()
 		int startHour, startMinute, endHour, endMinute;
 		Format::ParseTime(fStartTime->Text(), startHour, startMinute);
 		Format::ParseTime(fEndTime->Text(), endHour, endMinute);
-		Instant start = ToInstant(DateTime(startDate, startHour, startMinute));
-		Instant end = ToInstant(DateTime(endDate, endHour, endMinute));
+		Instant start = ToInstant(DateTime(startDate, startHour, startMinute), fZone);
+		Instant end = ToInstant(DateTime(endDate, endHour, endMinute), fZone);
 		// Untouched times keep their exact instants and zone.
 		bool unchanged = !fNew && !fEvent.allDay
 			&& start / 60 == fEvent.start / 60 && end / 60 == fEvent.end / 60;
@@ -1106,6 +1250,12 @@ EventEditorWindow::Save()
 			if (fNew || fEvent.allDay)
 				edited.tzid.clear();
 		}
+		// The zone picked in the editor.
+		if (!fZone.empty())
+			edited.tzid = fZone;
+		else if (!fEvent.allDay && !fEvent.tzid.empty() && fEvent.tzid != "UTC"
+			&& CanonicalZone(fEvent.tzid) != CanonicalZone(LocalZone()))
+			edited.tzid.clear();
 		edited.allDay = false;
 	}
 
@@ -1138,26 +1288,32 @@ EventEditorWindow::Save()
 
 	Store& store = TheApp()->Store();
 	std::string id;
-	if (!fNew && fRecurring && ruleChanged && rule.empty()
-		&& scope == EditScope::Future) {
-		// "Never" from here on: end the series and keep this one on its own.
-		DeleteOccurrence(store, fRef, EditScope::Future);
-		Event single = edited;
-		single.id.clear();
-		single.uid.clear();
-		single.remoteId.clear();
-		single.etag.clear();
-		single.raw.clear();
-		single.masterId.clear();
-		single.recurrenceId = 0;
-		single.recurrenceDate = Date();
-		single.exdates.clear();
-		single.exdateDays.clear();
-		single.rdates.clear();
-		single.cancelled = false;
-		id = SaveEvent(store, OccurrenceRef(), single, EditScope::All);
-	} else
-		id = SaveEvent(store, fRef, edited, scope);
+	{
+		// Ends before Finish(): Quit() leaves the thread without running
+		// destructors, which would keep the store locked.
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(),
+			fNew ? "New Event" : "Edit Event");
+		if (!fNew && fRecurring && ruleChanged && rule.empty()
+			&& scope == EditScope::Future) {
+			// "Never" from here on: end the series and keep this one on its own.
+			DeleteOccurrence(store, fRef, EditScope::Future);
+			Event single = edited;
+			single.id.clear();
+			single.uid.clear();
+			single.remoteId.clear();
+			single.etag.clear();
+			single.raw.clear();
+			single.masterId.clear();
+			single.recurrenceId = 0;
+			single.recurrenceDate = Date();
+			single.exdates.clear();
+			single.exdateDays.clear();
+			single.rdates.clear();
+			single.cancelled = false;
+			id = SaveEvent(store, OccurrenceRef(), single, EditScope::All);
+		} else
+			id = SaveEvent(store, fRef, edited, scope);
+	}
 
 	TheApp()->RequestPush(fCalendarId);
 	if (fEvent.calendarId != fCalendarId && !fEvent.calendarId.empty())
@@ -1185,7 +1341,10 @@ EventEditorWindow::Delete()
 		if (alert->Go() != 1)
 			return;
 	}
-	DeleteOccurrence(TheApp()->Store(), fRef, scope);
+	{
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Delete Event");
+		DeleteOccurrence(TheApp()->Store(), fRef, scope);
+	}
 	TheApp()->RequestPush(fEvent.calendarId);
 	Finish(fRef.eventId, true);
 }
@@ -1247,6 +1406,13 @@ EventEditorWindow::MessageReceived(BMessage* message)
 		case kMsgUrlModified:
 			UpdateJoin();
 			break;
+		case kMsgZone:
+		{
+			const char* zone;
+			if (message->FindString("zone", &zone) == B_OK)
+				ZoneChosen(zone);
+			break;
+		}
 		case kMsgJoin:
 		{
 			std::string url = JoinUrl();

@@ -499,16 +499,24 @@ TaskEditorWindow::Save()
 	}
 
 	bool completed = fCompleted->Value() == B_CONTROL_ON;
-	if (completed != fTask.completed) {
-		edited.completed = completed;
-		edited.completedAt = completed ? Now() : 0;
-	}
+	bool completionChanged = completed != fTask.completed;
 
 	if (fNew) {
 		edited.id = NewId();
 		edited.created = Now();
 	}
-	TheApp()->Store().UpdateTask(edited);
+	{
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), fNew ? "New Task" : "Edit Task");
+		if (fNew && completed) {
+			edited.completed = true;
+			edited.completedAt = Now();
+		}
+		TheApp()->Store().UpdateTask(edited);
+		// Completing goes through the store so a repeating local task moves
+		// on to its next date.
+		if (completionChanged && !fNew)
+			TheApp()->Store().SetTaskCompleted(edited.id, completed);
+	}
 
 	TheApp()->RequestPush(fListId);
 	if (!fTask.calendarId.empty() && fTask.calendarId != fListId)
@@ -530,7 +538,10 @@ TaskEditorWindow::Delete()
 	alert->SetShortcut(0, B_ESCAPE);
 	if (alert->Go() != 1)
 		return;
-	TheApp()->Store().DeleteTask(fTask.id);
+	{
+		aircal::UndoScope undo(TheApp()->Undo(), TheApp()->Store(), "Delete Task");
+		TheApp()->Store().DeleteTask(fTask.id);
+	}
 	TheApp()->RequestPush(fTask.calendarId);
 	Finish(fTask.id, true);
 }
