@@ -322,6 +322,12 @@ public:
 	void PlaceNear(BWindow* parent);
 
 protected:
+	// Resizes the (non-resizable) window to its content's height at the
+	// current width, after a status line or note is shown, hidden or
+	// rewrapped. The size limits alone do not grow it: they come from the
+	// views' minimum sizes, which leave out wrapped text.
+	void FitToContent();
+	void SetNoteVisible(BView* view, bool visible);
 	void Start(Job job, const std::string& status);
 	void CancelJob();
 	bool Busy() const { return fBusy; }
@@ -377,6 +383,29 @@ SignInWindow::PlaceNear(BWindow* parent)
 	else
 		PlaceWindow(this, -1, -1);
 	MoveOnScreen(B_DO_NOT_RESIZE_TO_FIT);
+}
+
+
+void
+SignInWindow::FitToContent()
+{
+	BLayout* layout = GetLayout();
+	if (layout == NULL)
+		return;
+	float width = Bounds().Width();
+	float height = layout->PreferredSize().height;
+	if (layout->HasHeightForWidth())
+		layout->GetHeightForWidth(width, NULL, NULL, &height);
+	if (height != Bounds().Height())
+		ResizeTo(width, height);
+}
+
+
+void
+SignInWindow::SetNoteVisible(BView* view, bool visible)
+{
+	SetVisible(view, visible);
+	FitToContent();
 }
 
 
@@ -437,7 +466,7 @@ void
 SignInWindow::ShowStatus(const std::string& text, bool error)
 {
 	fStatus->SetMessage(text, error);
-	SetVisible(fStatus, !text.empty());
+	SetNoteVisible(fStatus, !text.empty());
 }
 
 
@@ -589,11 +618,11 @@ GoogleSignInWindow::UpdateClient()
 	std::string source;
 	fHasClient = FindGoogleClient(TheApp()->SettingsRoot(), fClientId,
 		fClientSecret, &source);
-	SetVisible(fSetup, !fHasClient);
-	SetVisible(fClientNote, fHasClient);
 	if (fHasClient)
 		fClientNote->SetMessage("Using the OAuth client from " + source + ".",
 			false);
+	SetVisible(fSetup, !fHasClient);
+	SetNoteVisible(fClientNote, fHasClient);
 	fSignIn->SetEnabled(fHasClient);
 	SetDefaultButton(fHasClient ? fSignIn : fSaveClient);
 	if (!fHasClient)
@@ -800,7 +829,7 @@ CalDavSignInWindow::CalDavSignInWindow(const std::string& key,
 	} else
 		fServer->MakeFocus(true);
 	ShowStatus("", false);
-	SetVisible(fPresetNote, false);
+	SetNoteVisible(fPresetNote, false);
 	SetDefaultButton(fSignIn);
 }
 
@@ -814,7 +843,7 @@ CalDavSignInWindow::PresetChosen(int index)
 	if (preset.server[0] != '\0')
 		fServer->SetText(preset.server);
 	fPresetNote->SetMessage(preset.note, false);
-	SetVisible(fPresetNote, preset.note[0] != '\0');
+	SetNoteVisible(fPresetNote, preset.note[0] != '\0');
 	std::string text = fServer->Text();
 	size_t host = text.find("<host>");
 	if (host != std::string::npos) {
