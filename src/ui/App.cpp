@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <set>
+#include <unistd.h>
 
 using namespace aircal;
 
@@ -167,7 +168,14 @@ App::App()
 
 App::~App()
 {
-	fSync->Stop();
+	// A sync stuck in a call that does not see the cancel flag (the keystore
+	// waiting on an access prompt nobody answers) must not keep airCal from
+	// quitting. QuitRequested() has saved, and the store writes atomically:
+	// leave without tearing down what the stuck thread still uses.
+	if (!fSync->Stop(10000)) {
+		fprintf(stderr, "airCal: the sync did not stop; quitting anyway.\n");
+		_exit(0);
+	}
 	delete fSaveRunner;
 	delete fAlarmRunner;
 	fStore->Save();

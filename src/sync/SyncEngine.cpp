@@ -34,23 +34,31 @@ SyncEngine::Start()
 	if (fThread.joinable())
 		return;
 	fQuit = false;
+	fRunning = true;
 	fNextPeriodic = 0;
 	fThread = std::thread([this] { Run(); });
 }
 
 
-void
-SyncEngine::Stop()
+bool
+SyncEngine::Stop(int timeoutMs)
 {
 	{
-		std::lock_guard<std::mutex> lock(fLock);
+		std::unique_lock<std::mutex> lock(fLock);
 		fQuit = true;
 		fCancel = true;
+		fCondition.notify_all();
+		if (timeoutMs >= 0 && fThread.joinable()
+			&& !fCondition.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+				[this] { return !fRunning; })) {
+			fThread.detach();
+			return false;
+		}
 	}
-	fCondition.notify_all();
 	if (fThread.joinable())
 		fThread.join();
 	fCancel = false;
+	return true;
 }
 
 
@@ -168,6 +176,9 @@ SyncEngine::Run()
 		lock.lock();
 		fBusy = false;
 	}
+	fRunning = false;
+	lock.unlock();
+	fCondition.notify_all();
 }
 
 

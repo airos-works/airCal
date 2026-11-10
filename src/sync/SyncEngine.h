@@ -28,7 +28,12 @@ public:
 	~SyncEngine();
 
 	void Start();
-	void Stop();
+	// Cancels and joins the sync thread. With timeoutMs >= 0, gives up when
+	// the thread is still busy after that long (stuck in a call that does
+	// not see the cancel flag, such as a keystore access prompt nobody
+	// answers): returns false and leaves the thread running, detached, so
+	// the engine and what it uses must then outlive it.
+	bool Stop(int timeoutMs = -1);
 
 	// Syncs an account ("" = all enabled accounts) after delayMs.
 	void Request(const std::string& accountId = "", bool full = false,
@@ -51,6 +56,7 @@ private:
 	mutable std::mutex fLock;
 	std::condition_variable fCondition;
 	bool fQuit = false;
+	bool fRunning = false;	// Run() has not returned yet
 	bool fBusy = false;
 	std::atomic<bool> fCancel{false};
 	// account id ("" = all) -> due time (ms since epoch) and full flag
