@@ -40,14 +40,14 @@ view, and keep it in sync with the services you already use.
 <!-- airos-ci:latest-builds:start -->
 ## Latest builds
 
-Built automatically by air/OS CI from commit `829db8a` on 2026-11-03 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
+Built automatically by air/OS CI from commit `be7706d` on 2026-11-11 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
 
 | Architecture | Package |
 |---|---|
 | arm64 | [aircal-1.0.0-4-arm64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-4-arm64.hpkg) |
 | x86_64 | [aircal-1.0.0-4-x86_64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-4-x86_64.hpkg) |
 
-Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2447-gcbdd6fbb4a, arm64 hrev60207-2447-gcbdd6fbb4a.
+Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2567-gddb2d8fe76, arm64 hrev60207-2562-gbf526f982b.
 <!-- airos-ci:latest-builds:end -->
 
 ## Accounts
