@@ -6,16 +6,17 @@
 
 #include "App.h"
 #include "Dialogs.h"
+#include "DuePicker.h"
 #include "Format.h"
 #include "Messages.h"
 #include "Theme.h"
 
 #include <Alert.h>
-#include <Beep.h>
 #include <Button.h>
 #include <CheckBox.h>
 #include <LayoutBuilder.h>
 #include <MenuField.h>
+#include <MobileKit.h>
 #include <PopUpMenu.h>
 #include <ScrollView.h>
 #include <SeparatorView.h>
@@ -35,8 +36,10 @@ enum {
 	kMsgList = 'tlst',
 	kMsgHasDue = 'tdue',
 	kMsgHasTime = 'ttim',
-	kMsgDueCommitted = 'tdcm',
-	kMsgDueModified = 'tdmd',
+	kMsgChooseDate = 'tcdt',
+	kMsgChooseTime = 'tctm',
+	kMsgDateChosen = 'tdpk',
+	kMsgTimeChosen = 'ttpk',
 	kMsgPriority = 'tpri',
 	kMsgRepeat = 'trep',
 	kMsgAlarm = 'talm',
@@ -128,12 +131,14 @@ private:
 	void UpdateForList();
 	void UpdateDueControls();
 	void RebuildPriorityMenu();
-	bool Validate(bool mark);
 	void Save();
 	void Delete();
 	void Finish(const std::string& id, bool deleted);
 
 	Task fTask;
+	Date fDate;
+	int fHour = 9;
+	int fMinute = 0;
 	bool fNew;
 	bool fReadOnly = false;
 	std::string fKey;
@@ -149,9 +154,9 @@ private:
 	BPopUpMenu* fListMenu = NULL;
 	BMenuField* fListField = NULL;
 	BCheckBox* fHasDue = NULL;
-	BTextControl* fDueDate = NULL;
+	BButton* fDueDate = NULL;
 	BCheckBox* fHasTime = NULL;
-	BTextControl* fDueTime = NULL;
+	BButton* fDueTime = NULL;
 	BStringView* fRepeatLabel = NULL;
 	BPopUpMenu* fRepeatMenu = NULL;
 	BMenuField* fRepeatField = NULL;
@@ -198,7 +203,6 @@ TaskEditorWindow::TaskEditorWindow(const Task& task, bool isNew,
 
 	BuildLayout();
 	UpdateForList();
-	UpdateDueControls();
 
 	if (fReadOnly) {
 		SetTitle("Task (read-only)");
@@ -235,7 +239,7 @@ TaskEditorWindow::BuildLayout()
 	fTitle = new BTextControl("title", NULL, fTask.title.c_str(), NULL);
 	fTitle->SetFont(&titleFont);
 	fTitle->TextView()->SetFontAndColor(&titleFont);
-	fTitle->SetExplicitMinSize(BSize(300, B_SIZE_UNSET));
+	fTitle->SetExplicitMinSize(BSize(MobileEditor() ? 180 : 300, B_SIZE_UNSET));
 
 	fListMenu = new BPopUpMenu("list");
 	AddCalendarItems(fListMenu, true, fListId, kMsgList);
@@ -243,29 +247,18 @@ TaskEditorWindow::BuildLayout()
 
 	fHasDue = new BCheckBox("hasDue", "Due", new BMessage(kMsgHasDue));
 	fHasDue->SetValue(fTask.hasDue ? B_CONTROL_ON : B_CONTROL_OFF);
-	Date due = fTask.hasDue ? fTask.dueDate : Today();
-	fDueDate = new BTextControl("dueDate", NULL, DateFieldText(due).c_str(),
-		new BMessage(kMsgDueCommitted));
-	fDueDate->SetModificationMessage(new BMessage(kMsgDueModified));
-	float dateWidth = ceilf(be_plain_font->StringWidth("Wed, Sep 30, 2026")) + 24;
-	fDueDate->SetExplicitMinSize(BSize(dateWidth, B_SIZE_UNSET));
-	fDueDate->SetExplicitMaxSize(BSize(dateWidth * 1.3f, B_SIZE_UNSET));
+	fDate = fTask.hasDue ? fTask.dueDate : Today();
+	fDueDate = new BButton("dueDate", NULL, new BMessage(kMsgChooseDate));
 
-	fHasTime = new BCheckBox("hasTime", "at", new BMessage(kMsgHasTime));
+	fHasTime = new BCheckBox("hasTime", "Time", new BMessage(kMsgHasTime));
 	fHasTime->SetValue(fTask.hasDue && fTask.dueHasTime ? B_CONTROL_ON
 		: B_CONTROL_OFF);
-	int hour = 9, minute = 0;
 	if (fTask.hasDue && fTask.dueHasTime) {
 		DateTime wall = ToWall(fTask.dueTime);
-		hour = wall.hour;
-		minute = wall.minute;
+		fHour = wall.hour;
+		fMinute = wall.minute;
 	}
-	fDueTime = new BTextControl("dueTime", NULL,
-		TimeFieldText(hour, minute).c_str(), new BMessage(kMsgDueCommitted));
-	fDueTime->SetModificationMessage(new BMessage(kMsgDueModified));
-	float timeWidth = ceilf(be_plain_font->StringWidth("12:59 PM")) + 24;
-	fDueTime->SetExplicitMinSize(BSize(timeWidth, B_SIZE_UNSET));
-	fDueTime->SetExplicitMaxSize(BSize(timeWidth * 1.3f, B_SIZE_UNSET));
+	fDueTime = new BButton("dueTime", NULL, new BMessage(kMsgChooseTime));
 
 	fRepeatLabel = FieldLabel("Repeat:");
 	fRepeatMenu = new BPopUpMenu("repeat");
@@ -321,42 +314,40 @@ TaskEditorWindow::BuildLayout()
 	BLayoutBuilder::Grid<>(grid)
 		.Add(FieldLabel("List:"), 0, 0)
 		.Add(fListField, 1, 0)
-		.Add(FieldLabel("Due:"), 0, 1)
-		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 1)
-			.Add(fHasDue)
-			.Add(fDueDate)
-			.Add(fHasTime)
-			.Add(fDueTime)
-			.AddGlue()
-		.End()
-		.Add(fRepeatLabel, 0, 2)
-		.Add(fRepeatField, 1, 2)
-		.Add(fRepeatTextLabel, 0, 3)
-		.Add(fRepeatText, 1, 3)
-		.Add(FieldLabel("Alert:"), 0, 4)
-		.Add(fAlarmField, 1, 4)
-		.Add(fPriorityLabel, 0, 5)
-		.Add(fPriorityField, 1, 5)
-		.Add(fLabelsLabel, 0, 6)
-		.Add(fLabels, 1, 6)
-		.Add(FieldLabel("Notes:", true), 0, 7)
-		.Add(notesScroll, 1, 7)
-		.Add(fCompleted, 1, 8);
+		.Add(fHasDue, 0, 1)
+		.Add(fDueDate, 1, 1)
+		.Add(fHasTime, 0, 2)
+		.Add(fDueTime, 1, 2)
+		.Add(fRepeatLabel, 0, 3)
+		.Add(fRepeatField, 1, 3)
+		.Add(fRepeatTextLabel, 0, 4)
+		.Add(fRepeatText, 1, 4)
+		.Add(FieldLabel("Alert:"), 0, 5)
+		.Add(fAlarmField, 1, 5)
+		.Add(fPriorityLabel, 0, 6)
+		.Add(fPriorityField, 1, 6)
+		.Add(fLabelsLabel, 0, 7)
+		.Add(fLabels, 1, 7)
+		.Add(FieldLabel("Notes:", true), 0, 8)
+		.Add(notesScroll, 1, 8)
+		.Add(fCompleted, 1, 9);
 	grid->GridLayout()->SetColumnWeight(0, 0);
 	grid->GridLayout()->SetColumnWeight(1, 1);
 
-	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
-		.SetInsets(B_USE_WINDOW_SPACING)
+	if (MobileEditor()) {
+		for (auto* button : {fDueDate, fDueTime}) {
+			float height = BMobileKit::TargetSize();
+			button->SetExplicitMinSize(BSize(B_SIZE_UNSET, height));
+			button->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, height));
+			button->SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_VERTICAL_CENTER));
+		}
+	}
+	BGroupView* form = BuildEditorForm(this, fDelete, fCancel, fSave);
+	BLayoutBuilder::Group<>(form)
 		.Add(fTitle)
 		.Add(new BSeparatorView(B_HORIZONTAL))
 		.Add(grid)
-		.Add(fReadOnlyNote)
-		.AddGroup(B_HORIZONTAL)
-			.Add(fDelete)
-			.AddGlue()
-			.Add(fCancel)
-			.Add(fSave)
-		.End();
+		.Add(fReadOnlyNote);
 
 	SetVisible(fReadOnlyNote, fReadOnly);
 	SetVisible(fDelete, !fNew && !fReadOnly);
@@ -410,29 +401,13 @@ TaskEditorWindow::UpdateDueControls()
 {
 	bool due = fHasDue->Value() == B_CONTROL_ON;
 	bool editable = !fReadOnly;
-	fDueDate->SetEnabled(editable && due);
+	fDueDate->SetEnabled(editable);
+	fDueDate->SetLabel(due ? DateFieldText(fDate).c_str() : "Choose date…");
 	fHasTime->SetEnabled(editable && due);
-	fDueTime->SetEnabled(editable && due && fHasTime->Value() == B_CONTROL_ON);
+	fDueTime->SetEnabled(editable && due && fType != AccountType::Google);
+	fDueTime->SetLabel(fHasTime->Value() == B_CONTROL_ON && due
+		? TimeFieldText(fHour, fMinute).c_str() : "Choose time…");
 	fAlarmField->SetEnabled(editable && due);
-	Validate(true);
-}
-
-
-bool
-TaskEditorWindow::Validate(bool mark)
-{
-	bool due = fHasDue->Value() == B_CONTROL_ON;
-	bool timed = due && fType != AccountType::Google
-		&& fHasTime->Value() == B_CONTROL_ON;
-	Date date;
-	int hour, minute;
-	bool dateOk = !due || Format::ParseDate(fDueDate->Text(), date);
-	bool timeOk = !timed || Format::ParseTime(fDueTime->Text(), hour, minute);
-	if (mark) {
-		SetFieldValid(fDueDate, dateOk);
-		SetFieldValid(fDueTime, timeOk);
-	}
-	return dateOk && timeOk;
 }
 
 
@@ -441,10 +416,6 @@ TaskEditorWindow::Save()
 {
 	if (fReadOnly)
 		return;
-	if (!Validate(true)) {
-		beep();
-		return;
-	}
 
 	Task edited = fTask;
 	edited.title = Trim(fTitle->Text());
@@ -457,12 +428,14 @@ TaskEditorWindow::Save()
 	bool todoist = fType == AccountType::Todoist;
 	edited.hasDue = fHasDue->Value() == B_CONTROL_ON;
 	if (edited.hasDue) {
-		Format::ParseDate(fDueDate->Text(), edited.dueDate);
+		edited.dueDate = fDate;
 		edited.dueHasTime = !google && fHasTime->Value() == B_CONTROL_ON;
 		if (edited.dueHasTime) {
-			int hour, minute;
-			Format::ParseTime(fDueTime->Text(), hour, minute);
-			edited.dueTime = ToInstant(DateTime(edited.dueDate, hour, minute));
+			// Keep the original instant (seconds and DST fold) on an unrelated edit.
+			DateTime original = ToWall(fTask.dueTime);
+			if (!fTask.dueHasTime || fDate != fTask.dueDate
+				|| fHour != original.hour || fMinute != original.minute)
+				edited.dueTime = ToInstant(DateTime(edited.dueDate, fHour, fMinute));
 		} else
 			edited.dueTime = 0;
 	} else {
@@ -577,27 +550,46 @@ TaskEditorWindow::MessageReceived(BMessage* message)
 		}
 		case kMsgHasDue:
 		case kMsgHasTime:
+		{
+			auto* toggle = message->what == kMsgHasDue ? fHasDue : fHasTime;
+			if (toggle->Value() == B_CONTROL_ON) {
+				// Accepting a choice enables it. Cancel leaves the deadline alone.
+				toggle->SetValue(B_CONTROL_OFF);
+				PostMessage(toggle == fHasDue ? kMsgChooseDate : kMsgChooseTime);
+			}
 			UpdateDueControls();
 			break;
-		case kMsgDueCommitted:
+		}
+		case kMsgChooseDate:
 		{
-			Date date;
-			int hour, minute;
-			if (Format::ParseDate(fDueDate->Text(), date)) {
-				std::string text = DateFieldText(date);
-				if (text != fDueDate->Text())
-					fDueDate->SetText(text.c_str());
+			if (fReadOnly)
+				break;
+			Store& store = TheApp()->Store();
+			int weekStart;
+			{
+				std::lock_guard<std::recursive_mutex> lock(store.Mutex());
+				weekStart = store.Prefs().weekStart;
 			}
-			if (Format::ParseTime(fDueTime->Text(), hour, minute)) {
-				std::string text = TimeFieldText(hour, minute);
-				if (text != fDueTime->Text())
-					fDueTime->SetText(text.c_str());
-			}
-			Validate(true);
+			PickDueDate(this, fDate, weekStart, kMsgDateChosen);
 			break;
 		}
-		case kMsgDueModified:
-			Validate(true);
+		case kMsgChooseTime:
+			if (fDueTime->IsEnabled())
+				PickDueTime(this, fHour, fMinute, kMsgTimeChosen);
+			break;
+		case kMsgDateChosen:
+			if (!fReadOnly && Date::FromIso(message->GetString("date", ""), fDate)) {
+				fHasDue->SetValue(B_CONTROL_ON);
+				UpdateDueControls();
+			}
+			break;
+		case kMsgTimeChosen:
+			if (fDueTime->IsEnabled()) {
+				fHour = message->GetInt32("hour", fHour);
+				fMinute = message->GetInt32("minute", fMinute);
+				fHasTime->SetValue(B_CONTROL_ON);
+				UpdateDueControls();
+			}
 			break;
 		case kMsgPriority:
 		{
@@ -631,7 +623,6 @@ TaskEditorWindow::MessageReceived(BMessage* message)
 			break;
 		case B_COLORS_UPDATED:
 			Theme::Refresh();
-			Validate(true);
 			BWindow::MessageReceived(message);
 			break;
 		default:
@@ -678,6 +669,5 @@ OpenTaskEditor(const std::string& taskId, const Task& draft, float anchorX,
 
 	TaskEditorWindow* window = new TaskEditorWindow(task, isNew, key);
 	Register(key, window);
-	PlaceWindow(window, anchorX, anchorY);
-	window->Show();
+	ShowItemEditor(window, anchorX, anchorY);
 }

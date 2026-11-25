@@ -11,6 +11,8 @@
 
 #include <string>
 
+class BButton;
+class BGroupView;
 class BMenu;
 class BMessage;
 class BTextControl;
@@ -61,6 +63,12 @@ void PostToMain(BMessage* message);
 // a popover (to its right, or left when there is no room), keeping it on
 // screen. A negative x centres it on the main window.
 void PlaceWindow(BWindow* window, float anchorX, float anchorY);
+
+// Shared editor form and actions. In mobile presentation the form scrolls
+// independently, keeping Save and Cancel in reach above the keyboard.
+bool MobileEditor();
+BGroupView* BuildEditorForm(BWindow* window, BButton* remove, BButton* cancel, BButton* save);
+void ShowItemEditor(BWindow* window, float anchorX, float anchorY);
 
 // One window per key ("event:<id>@<occurrence>", "task:<id>", ...).
 // Activate brings an open one forward and returns true.

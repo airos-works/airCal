@@ -15,6 +15,8 @@ class BMenuItem;
 class BSplitView;
 class CalendarView;
 class HeaderView;
+class MobilePlanner;
+class BGroupView;
 class SidebarView;
 
 struct Selection {
@@ -63,6 +65,7 @@ public:
 	void MenusBeginning() override;
 
 	void SaveState();
+	bool IsMobile() const { return fMobile; }
 
 	// Navigation
 	void SetViewMode(const std::string& mode);
@@ -82,7 +85,7 @@ public:
 	void EditTask(const std::string& taskId, BPoint screenPoint);
 	void NewEventAt(aircal::Instant start, aircal::Instant end, bool allDay,
 		const aircal::Date& date, BPoint screenPoint, const std::string& title = "");
-	void NewTask(const aircal::Date* due, BPoint screenPoint);
+	void NewTask(const aircal::Date* due, BPoint screenPoint, const std::string& listId = "");
 	void ToggleTask(const std::string& taskId, bool completed);
 	void MoveEvent(const aircal::DisplayEvent& event, aircal::Instant start,
 		aircal::Instant end, bool allDay, const aircal::Date& date, int days);
@@ -98,11 +101,16 @@ public:
 
 private:
 	void BuildMenus(class BMenuBar* bar);
+	void SetMobile(bool mobile);
 	void UpdateHeader();
 	void ReloadAll();
 	CalendarView* CurrentView() const;
 	void UpdateSyncStatus(BMessage* message);
 
+	BGroupView* fDesktop = nullptr;
+	MobilePlanner* fPlanner = nullptr;
+	bool fMobile = false;
+	BRect fDesktopFrame;
 	HeaderView* fHeader = nullptr;
 	SidebarView* fSidebar = nullptr;
 	BSplitView* fSplit = nullptr;

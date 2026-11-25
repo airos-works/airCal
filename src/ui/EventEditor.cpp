@@ -17,6 +17,7 @@
 #include <LayoutBuilder.h>
 #include <MenuField.h>
 #include <MenuItem.h>
+#include <MobileKit.h>
 #include <PopUpMenu.h>
 #include <Screen.h>
 #include <ScrollView.h>
@@ -214,6 +215,80 @@ PostToMain(BMessage* message)
 }
 
 
+bool
+MobileEditor()
+{
+	return TheApp()->Window() != NULL && TheApp()->Window()->IsMobile();
+}
+
+
+class ScrollableForm : public BGroupView {
+public:
+	ScrollableForm() : BGroupView("editorFields", B_VERTICAL) {}
+
+	BSize MinSize() override
+	{
+		return BSize(BGroupView::MinSize().width, BMobileKit::TargetSize());
+	}
+
+	void DoLayout() override
+	{
+		BGroupView::DoLayout();
+		auto* bar = ScrollBar(B_VERTICAL);
+		if (bar == NULL)
+			return;
+		float content = BGroupView::MinSize().height + 1;
+		float visible = Bounds().Height() + 1;
+		bar->SetRange(0, std::max(0.0f, content - visible));
+		bar->SetProportion(std::min(1.0f, visible / std::max(1.0f, content)));
+		bar->SetSteps(BMobileKit::TargetSize() / 2, visible);
+	}
+};
+
+
+BGroupView*
+BuildEditorForm(BWindow* window, BButton* remove, BButton* cancel, BButton* save)
+{
+	bool mobile = MobileEditor();
+	BGroupView* fields = mobile ? new ScrollableForm() : new BGroupView(B_VERTICAL);
+	BGroupView* actions;
+	if (mobile) {
+		actions = new BMobileKit::MetalBar("editorActions", BMobileKit::B_MOBILE_BOTTOM_BAR);
+		for (auto* button : {remove, cancel, save})
+			BMobileKit::TouchTarget(button);
+		fields->GroupLayout()->SetInsets(B_USE_WINDOW_SPACING);
+		auto* scroll = BMobileKit::Scroll("formScroll", fields);
+		scroll->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		BLayoutBuilder::Group<>(window, B_VERTICAL, 0).Add(scroll, 1).Add(actions);
+	} else {
+		actions = new BGroupView(B_HORIZONTAL);
+		BLayoutBuilder::Group<>(window, B_VERTICAL)
+			.SetInsets(B_USE_WINDOW_SPACING).Add(fields).Add(actions);
+	}
+	BLayoutBuilder::Group<>(actions).Add(remove).AddGlue().Add(cancel).Add(save);
+	return fields;
+}
+
+
+void
+ShowItemEditor(BWindow* window, float anchorX, float anchorY)
+{
+	PlaceWindow(window, anchorX, anchorY);
+	if (auto* fields = window->FindView("editorFields")) {
+		// Use the shell's work area, including when the system keyboard is up.
+		BRect area = MainBWindow()->Frame();
+		float width = std::min(area.Width() - 8, BMobileKit::TargetSize() * 12);
+		auto* actions = window->FindView("editorActions");
+		float natural = fields->GetLayout()->MinSize().height + actions->MinSize().height + 1;
+		float height = std::min(area.Height() - 36, natural);
+		window->ResizeTo(width, height);
+		window->CenterIn(area);
+		window->MoveOnScreen();
+	}
+	window->Show();
+}
+
+
 void
 PlaceWindow(BWindow* window, float anchorX, float anchorY)
 {
@@ -274,7 +349,7 @@ ActivateRegistered(const std::string& key)
 			return false;
 		messenger = found->second.first;
 	}
-	if (messenger.LockTarget() != B_OK)
+	if (!messenger.LockTarget())
 		return false;
 	BLooper* looper = NULL;
 	messenger.Target(&looper);
@@ -698,7 +773,7 @@ EventEditorWindow::BuildLayout()
 		NULL);
 	fTitle->SetFont(&titleFont);
 	fTitle->TextView()->SetFontAndColor(&titleFont);
-	fTitle->SetExplicitMinSize(BSize(320, B_SIZE_UNSET));
+	fTitle->SetExplicitMinSize(BSize(MobileEditor() ? 180 : 320, B_SIZE_UNSET));
 
 	fLocation = new BTextControl("location", NULL, fEvent.location.c_str(),
 		NULL);
@@ -778,13 +853,13 @@ EventEditorWindow::BuildLayout()
 	builder
 		.Add(fAllDay, 1, 0)
 		.Add(FieldLabel("Starts:"), 0, 1)
-		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 1)
+		.AddGroup(MobileEditor() ? B_VERTICAL : B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 1)
 			.Add(fStartDate)
 			.Add(fStartTime)
 			.AddGlue()
 		.End()
 		.Add(FieldLabel("Ends:"), 0, 2)
-		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 2)
+		.AddGroup(MobileEditor() ? B_VERTICAL : B_HORIZONTAL, B_USE_SMALL_SPACING, 1, 2)
 			.Add(fEndDate)
 			.Add(fEndTime)
 			.AddGlue()
@@ -824,19 +899,13 @@ EventEditorWindow::BuildLayout()
 	fReadOnlyNote->SetExplicitAlignment(BAlignment(B_ALIGN_CENTER,
 		B_ALIGN_MIDDLE));
 
-	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
-		.SetInsets(B_USE_WINDOW_SPACING)
+	BGroupView* form = BuildEditorForm(this, fDelete, fCancel, fSave);
+	BLayoutBuilder::Group<>(form)
 		.Add(fTitle)
 		.Add(fLocation)
 		.Add(new BSeparatorView(B_HORIZONTAL))
 		.Add(grid)
-		.Add(fReadOnlyNote)
-		.AddGroup(B_HORIZONTAL)
-			.Add(fDelete)
-			.AddGlue()
-			.Add(fCancel)
-			.Add(fSave)
-		.End();
+		.Add(fReadOnlyNote);
 
 	SetVisible(fReadOnlyNote, fReadOnly);
 	SetVisible(fDelete, !fNew && !fReadOnly);
@@ -1511,6 +1580,5 @@ OpenEventEditor(const OccurrenceRef& ref, const Event& draft, float anchorX,
 
 	EventEditorWindow* window = new EventEditorWindow(ref, event, isNew, key);
 	Register(key, window);
-	PlaceWindow(window, anchorX, anchorY);
-	window->Show();
+	ShowItemEditor(window, anchorX, anchorY);
 }

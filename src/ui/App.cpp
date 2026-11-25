@@ -378,13 +378,6 @@ App::MessageReceived(BMessage* message)
 			if (fWindow != nullptr)
 				BMessenger(fWindow).SendMessage(message);
 			break;
-		case kMsgSetView:
-		case kMsgGoToday:
-		case kMsgGoNext:
-		case kMsgGoPrevious:
-		case kMsgGoToDate:
-		case kMsgNewEvent:
-		case kMsgNewTask:
 		case kMsgScriptTask:
 		{
 			// hey waits for the answer: run it in the window and reply here.
@@ -408,6 +401,13 @@ App::MessageReceived(BMessage* message)
 				break;
 			}
 			// fall through
+		case kMsgSetView:
+		case kMsgGoToday:
+		case kMsgGoNext:
+		case kMsgGoPrevious:
+		case kMsgGoToDate:
+		case kMsgNewEvent:
+		case kMsgNewTask:
 		case kMsgTaskFilter:
 		case kMsgToggleSidebar:
 		case kMsgToggleTask:

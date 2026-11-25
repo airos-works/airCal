@@ -21,6 +21,16 @@ view, and keep it in sync with the services you already use.
 - **Tasks**: Today (with overdue), Upcoming, All (by list), Completed and per
   list, with priorities, labels, subtasks, due dates and times, recurring
   tasks, and tasks shown in the calendar on their due date.
+  In the task editor, click **Choose date…** to pick a day from the calendar.
+  **Choose time…** adds an optional due time on lists that support it.
+- **Phone and tablet**. In air/OS Mobile, tap a day in the week strip to see
+  its agenda. Wider tablets show the month beside the agenda. Switch to
+  **Tasks** to add a task, open it for editing, or tap its circle to complete
+  it. On tablets, select a list in the sidebar to work on just that list.
+  The **Completed** filter lets you find and reopen finished tasks.
+  [Phone calendar](docs/screenshots/phone-calendar.png) ·
+  [Tablet calendar](docs/screenshots/tablet-calendar.png) ·
+  [Tablet tasks](docs/screenshots/tablet-tasks.png)
 - **Sync**
   - **Google Calendar** (all calendars, colours, reminders, recurring events and
     their exceptions, incremental sync) and **Google Tasks**.

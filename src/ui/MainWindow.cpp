@@ -5,6 +5,7 @@
 #include "Format.h"
 #include "HeaderView.h"
 #include "Messages.h"
+#include "MobilePlanner.h"
 #include "SidebarView.h"
 #include "Theme.h"
 #include "Views.h"
@@ -20,6 +21,7 @@
 #include <Menu.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
+#include <MobileKit.h>
 #include <Path.h>
 #include <PopUpMenu.h>
 #include <Screen.h>
@@ -126,9 +128,9 @@ MainWindow::MainWindow()
 	fSplit->SetCollapsible(0, true);
 	fSplit->SetCollapsible(1, false);
 
-	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
-		.Add(bar)
-		.Add(fSplit, 1.0f);
+	fDesktop = new BGroupView("desktop", B_VERTICAL, 0);
+	BLayoutBuilder::Group<>(fDesktop).Add(bar).Add(fSplit, 1.0f);
+	BLayoutBuilder::Group<>(this, B_VERTICAL, 0).Add(fDesktop);
 
 	SetSizeLimits(720, 32768, 480, 32768);
 	float l, t, r, b;
@@ -153,11 +155,39 @@ MainWindow::MainWindow()
 	SetViewMode(fMode);
 	GoTo(fDate);
 	SetPulseRate(50000);
+	BMobileKit::PrepareWindow(this, [this](bool mobile) { SetMobile(mobile); });
 }
 
 
 MainWindow::~MainWindow()
 {
+}
+
+
+void
+MainWindow::SetMobile(bool mobile)
+{
+	if (mobile == fMobile)
+		return;
+	fMobile = mobile;
+	if (mobile) {
+		fDesktopFrame = Frame();
+		fDesktop->Hide();
+		if (fPlanner == nullptr) {
+			fPlanner = new MobilePlanner(this);
+			GetLayout()->AddView(fPlanner);
+		} else
+			fPlanner->Show();
+		SetSizeLimits(0, 32768, 0, 32768);
+		fPlanner->ShowTasks(fMode == "tasks");
+	} else {
+		fPlanner->Hide();
+		fDesktop->Show();
+		SetSizeLimits(720, 32768, 480, 32768);
+		GoTo(fDate);
+		fSidebar->Reload();
+	}
+	Layout(true);
 }
 
 
@@ -297,8 +327,11 @@ MainWindow::SetViewMode(const std::string& mode)
 	fCards->SetVisibleItem(fCards->IndexOfView(view));
 	view->SetAnchor(fDate);
 	fHeader->SetMode(mode);
+	if (fMobile)
+		fPlanner->ShowTasks(mode == "tasks");
 	UpdateHeader();
-	view->MakeFocus(true);
+	if (!fMobile)
+		view->MakeFocus(true);
 	{
 		std::lock_guard<std::recursive_mutex> lock(TheApp()->Store().Mutex());
 		TheApp()->Store().Prefs().view = mode;
@@ -310,6 +343,10 @@ void
 MainWindow::GoTo(const Date& date)
 {
 	fDate = date;
+	if (fMobile) {
+		fPlanner->Reload(true);
+		return;
+	}
 	CurrentView()->SetAnchor(date);
 	fSidebar->SetSelectedDate(date);
 	UpdateHeader();
@@ -329,7 +366,8 @@ MainWindow::UpdateHeader()
 	std::string bold, light;
 	CurrentView()->Title(bold, light);
 	fHeader->SetTitle(bold, light);
-	SetTitle(("airCal — " + bold + (light.empty() ? "" : " " + light)).c_str());
+	if (!fMobile)
+		SetTitle(("airCal — " + bold + (light.empty() ? "" : " " + light)).c_str());
 }
 
 
@@ -337,6 +375,10 @@ void
 MainWindow::ReloadAll()
 {
 	fReloadPending = false;
+	if (fMobile) {
+		fPlanner->Reload();
+		return;
+	}
 	CurrentView()->Reload();
 	fSidebar->Reload();
 	// Other views reload when shown.
@@ -430,13 +472,15 @@ MainWindow::NewEventAt(Instant start, Instant end, bool allDay, const Date& date
 
 
 void
-MainWindow::NewTask(const Date* due, BPoint screenPoint)
+MainWindow::NewTask(const Date* due, BPoint screenPoint, const std::string& listId)
 {
 	Store& store = TheApp()->Store();
 	Task draft;
 	{
 		std::lock_guard<std::recursive_mutex> lock(store.Mutex());
-		Calendar* list = store.DefaultCalendar(true);
+		Calendar* list = listId.empty() ? store.DefaultCalendar(true) : store.FindCalendar(listId);
+		if (!listId.empty() && (list == nullptr || !list->tasks || list->readOnly))
+			return;
 		if (list == nullptr) {
 			BAlert* alert = new BAlert("airCal", "There is no task list you can "
 				"add tasks to. Add a Todoist or Google account, or turn one on in "
@@ -900,6 +944,24 @@ void
 MainWindow::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
+		case BMobileKit::B_MOBILE_VIEW_CHANGED:
+			SetMobile(message->GetBool("mobile", false));
+			break;
+		case kMsgEditTask:
+			EditTask(message->GetString("task", ""), BPoint(-1, -1));
+			break;
+		case kMsgEditEvent:
+		{
+			Selection selection;
+			selection.kind = Selection::EventItem;
+			selection.ref.eventId = message->GetString("event", "");
+			selection.ref.overrideId = message->GetString("override", "");
+			selection.ref.originalStart = message->GetInt64("original", 0);
+			Date::FromIso(message->GetString("originalDate", ""), selection.ref.originalDate);
+			SetSelection(selection);
+			OpenEventEditor(selection.ref, Event());
+			break;
+		}
 		case kMsgStoreChanged:
 			if (!fReloadPending) {
 				fReloadPending = true;
@@ -923,13 +985,14 @@ MainWindow::MessageReceived(BMessage* message)
 		}
 		case kMsgGoToday:
 			GoTo(Today());
-			CurrentView()->ScrollToNow();
+			if (!fMobile)
+				CurrentView()->ScrollToNow();
 			break;
 		case kMsgGoNext:
-			GoTo(CurrentView()->Step(1));
+			GoTo(fMobile ? fPlanner->Step(1) : CurrentView()->Step(1));
 			break;
 		case kMsgGoPrevious:
-			GoTo(CurrentView()->Step(-1));
+			GoTo(fMobile ? fPlanner->Step(-1) : CurrentView()->Step(-1));
 			break;
 		case kMsgGoToDate:
 		{
@@ -1016,9 +1079,9 @@ MainWindow::MessageReceived(BMessage* message)
 			const char* text;
 			Date due;
 			if (message->FindString("date", &text) == B_OK && Date::FromIso(text, due))
-				NewTask(&due, BPoint(-1, -1));
+				NewTask(&due, BPoint(-1, -1), message->GetString("list", ""));
 			else
-				NewTask(nullptr, BPoint(-1, -1));
+				NewTask(nullptr, BPoint(-1, -1), message->GetString("list", ""));
 			break;
 		}
 		case kMsgQuickEntry:
@@ -1283,6 +1346,8 @@ MainWindow::MessageReceived(BMessage* message)
 		case B_COLORS_UPDATED:
 		{
 			Theme::Refresh();
+			if (fMobile)
+				fPlanner->Reload();
 			fHeader->Invalidate();
 			fSidebar->Invalidate();
 			CalendarView* views[] = {fDayView, fWeekView, fMonthView, fYearView,
@@ -1305,7 +1370,7 @@ MainWindow::MessageReceived(BMessage* message)
 void
 MainWindow::SaveState()
 {
-	BRect frame = Frame();
+	BRect frame = fMobile ? fDesktopFrame : Frame();
 	char text[64];
 	snprintf(text, sizeof(text), "%.0f %.0f %.0f %.0f", frame.left, frame.top,
 		frame.right, frame.bottom);
@@ -1313,7 +1378,7 @@ MainWindow::SaveState()
 	std::lock_guard<std::recursive_mutex> lock(store.Mutex());
 	store.Prefs().windowFrame = text;
 	store.Prefs().view = fMode;
-	if (!fSidebarHidden && fSidebar->Bounds().Width() > 100)
+	if (!fMobile && !fSidebarHidden && fSidebar->Bounds().Width() > 100)
 		store.Prefs().sidebarWidth = fSidebar->Bounds().Width();
 	store.MarkDirty();
 }

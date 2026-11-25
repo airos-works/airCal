@@ -11,7 +11,7 @@ BUILD ?= build-haiku
 # '=' is relative to the (cross) sysroot.
 PRIVATE_HEADERS ?= =/boot/system/develop/headers/private
 CPPFLAGS += -Isrc -Ivendor $(APP_CPPFLAGS)
-HAIKU_CPPFLAGS = -I$(PRIVATE_HEADERS)/shared -I$(PRIVATE_HEADERS)/interface
+HAIKU_CPPFLAGS = -Ivendor/mobile-kit -I$(PRIVATE_HEADERS)/shared -I$(PRIVATE_HEADERS)/interface
 CXXFLAGS ?= -O2 -g
 CXXFLAGS += -std=c++17 -Wall -Wextra -Wno-multichar -Wno-unused-parameter \
 	-Wno-missing-field-initializers -Wno-sign-compare
