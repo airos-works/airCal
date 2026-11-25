@@ -50,14 +50,14 @@ view, and keep it in sync with the services you already use.
 <!-- airos-ci:latest-builds:start -->
 ## Latest builds
 
-Built automatically by air/OS CI from commit `cbafcc6` on 2026-11-25 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
+Built automatically by air/OS CI from commit `3ca8f41` on 2026-11-25 ([all files](https://github.com/airos-works/airCal/releases/tag/latest)).
 
 | Architecture | Package |
 |---|---|
-| arm64 | [aircal-1.0.0-5-arm64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-5-arm64.hpkg) |
-| x86_64 | [aircal-1.0.0-5-x86_64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-5-x86_64.hpkg) |
+| arm64 | [aircal-1.0.0-6-arm64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-6-arm64.hpkg) |
+| x86_64 | [aircal-1.0.0-6-x86_64.hpkg](https://github.com/airos-works/airCal/releases/download/latest/aircal-1.0.0-6-x86_64.hpkg) |
 
-Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2963-g54a098c6dc, arm64 hrev60207-2965-g94c092adbe.
+Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2966-g5a15ae5440, arm64 hrev60207-2966-g5a15ae5440.
 <!-- airos-ci:latest-builds:end -->
 
 ## Accounts
